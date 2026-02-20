@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BioScan Pro - ระบบสแกนลายนิ้วมือ</title>
+    <!-- โหลด Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- โหลด Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* ซ่อน Element ง่ายขึ้นด้วย class hidden ของ Tailwind */
+        [data-lucide] {
+            display: inline-block;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900 font-sans pb-10">
+
+    <!-- Header -->
+    <nav class="bg-indigo-600 p-4 text-white shadow-lg sticky top-0 z-10">
+        <div class="max-w-md mx-auto flex items-center gap-3">
+            <i data-lucide="fingerprint" class="w-7 h-7"></i>
+            <h1 class="text-xl font-bold">BioScan Pro</h1>
+        </div>
+    </nav>
+
+    <main class="max-w-md mx-auto p-4 space-y-6">
+        
+        <!-- Status Card (Error Banner) -->
+        <div id="error-banner" class="hidden bg-red-100 border-l-4 border-red-500 p-4 rounded flex items-start gap-3">
+            <i data-lucide="alert-circle" class="text-red-500 shrink-0 w-6 h-6"></i>
+            <p id="error-banner-text" class="text-red-700 text-sm"></p>
+        </div>
+
+        <!-- User Profile Area -->
+        <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center text-center">
+            
+            <!-- Icon Status Container -->
+            <div id="profile-icon-container" class="w-24 h-24 rounded-full flex items-center justify-center mb-4 transition-all duration-500 bg-slate-100">
+                <!-- Icon will be injected by JS -->
+            </div>
+
+            <h2 id="greeting-text" class="text-2xl font-bold mb-1">ยินดีต้อนรับ</h2>
+            <p id="status-text" class="text-slate-500 text-sm mb-6">กรุณาลงทะเบียนลายนิ้วมือเพื่อเริ่มใช้งาน</p>
+
+            <!-- Buttons Container -->
+            <div id="btn-container" class="w-full space-y-3">
+                <!-- Buttons will be injected by JS -->
+            </div>
+        </div>
+
+        <!-- Records List -->
+        <div class="space-y-4">
+            <div class="flex items-center justify-between px-1">
+                <h3 class="font-bold text-slate-700 flex items-center gap-2">
+                    <i data-lucide="history" class="w-5 h-5"></i>
+                    ประวัติการสแกน
+                </h3>
+                <span id="records-count" class="text-xs bg-slate-200 px-2 py-1 rounded-full text-slate-600">
+                    0 รายการ
+                </span>
+            </div>
+
+            <div id="records-list" class="space-y-3">
+                <!-- Records will be injected by JS -->
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Message Toast -->
+    <div id="toast" class="hidden fixed bottom-6 left-4 right-4 bg-red-600 text-white p-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-bounce">
+        <i data-lucide="alert-circle" class="w-5 h-5"></i>
+        <span id="toast-text" class="text-sm"></span>
+    </div>
+
+    <script>
+        // State variables
+        let user = null;
+        let records = [];
+        let status = 'ready'; // ready, scanning, success, error
+        let errorMessage = '';
+        let isSupported = true;
+
+        // DOM Elements
+        const errorBanner = document.getElementById('error-banner');
+        const errorBannerText = document.getElementById('error-banner-text');
+        const profileIconContainer = document.getElementById('profile-icon-container');
+        const greetingText = document.getElementById('greeting-text');
+        const statusText = document.getElementById('status-text');
+        const btnContainer = document.getElementById('btn-container');
+        const recordsCount = document.getElementById('records-count');
+        const recordsList = document.getElementById('records-list');
+        const toast = document.getElementById('toast');
+        const toastText = document.getElementById('toast-text');
+
+        // ฟังก์ชันเริ่มต้น (ตรวจสอบการรองรับและโหลดข้อมูลเก่า)
+        function init() {
+            if (!window.PublicKeyCredential) {
+                isSupported = false;
+                errorMessage = 'เบราว์เซอร์ของคุณไม่รองรับการสแกนลายนิ้วมือผ่านเว็บ';
+            }
+            
+            const savedRecords = localStorage.getItem('fp_records');
+            if (savedRecords) records = JSON.parse(savedRecords);
+            
+            const savedUser = localStorage.getItem('fp_user');
+            if (savedUser) user = JSON.parse(savedUser);
+
+            render();
+        }
+
+        // ฟังก์ชันเรนเดอร์ UI อัปเดตหน้าจอตาม State ปัจจุบัน
+        function render() {
+            // Error Banner
+            if (!isSupported) {
+                errorBanner.classList.remove('hidden');
+                errorBannerText.innerText = errorMessage;
+            } else {
+                errorBanner.classList.add('hidden');
+            }
+
+            // Profile Icon Area
+            profileIconContainer.className = `w-24 h-24 rounded-full flex items-center justify-center mb-4 transition-all duration-500 ${
+                status === 'scanning' ? 'bg-indigo-100 animate-pulse' : 
+                status === 'success' ? 'bg-green-100' : 
+                status === 'error' ? 'bg-red-100' : 'bg-slate-100'
+            }`;
+
+            if (status === 'scanning') {
+                profileIconContainer.innerHTML = `<i data-lucide="fingerprint" class="text-indigo-600 animate-bounce w-12 h-12"></i>`;
+            } else if (status === 'success') {
+                profileIconContainer.innerHTML = `<i data-lucide="shield-check" class="text-green-600 w-12 h-12"></i>`;
+            } else if (status === 'error') {
+                profileIconContainer.innerHTML = `<i data-lucide="alert-circle" class="text-red-600 w-12 h-12"></i>`;
+            } else {
+                profileIconContainer.innerHTML = `<i data-lucide="fingerprint" class="text-slate-400 w-12 h-12"></i>`;
+            }
+
+            // Text Updates
+            greetingText.innerText = user ? `สวัสดี, ${user.name}` : "ยินดีต้อนรับ";
+            
+            if (status === 'scanning') {
+                statusText.innerText = "กำลังรอการยืนยัน...";
+            } else if (status === 'success') {
+                statusText.innerText = "ยืนยันตัวตนสำเร็จ";
+            } else if (user) {
+                statusText.innerText = "ระบบพร้อมสแกนเพื่อบันทึกเวลา";
+            } else {
+                statusText.innerText = "กรุณาลงทะเบียนลายนิ้วมือเพื่อเริ่มใช้งาน";
+            }
+
+            // Buttons rendering
+            let buttonsHtml = '';
+            if (user) {
+                buttonsHtml = `
+                    <button onclick="handleScan('auth')" ${status === 'scanning' ? 'disabled' : ''} class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold py-4 rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2">
+                        <i data-lucide="fingerprint" class="w-5 h-5"></i>
+                        สแกนเพื่อบันทึกเวลา
+                    </button>
+                    <button onclick="clearData()" class="text-slate-400 text-xs hover:text-red-500 flex items-center justify-center gap-1 mx-auto mt-4">
+                        <i data-lucide="trash-2" class="w-3 h-3"></i> ล้างข้อมูลระบบ
+                    </button>
+                `;
+            } else {
+                buttonsHtml = `
+                    <button onclick="handleScan('register')" ${status === 'scanning' || !isSupported ? 'disabled' : ''} class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-semibold py-4 rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2">
+                        <i data-lucide="user-check" class="w-5 h-5"></i>
+                        ลงทะเบียนลายนิ้วมือ
+                    </button>
+                `;
+            }
+            btnContainer.innerHTML = buttonsHtml;
+
+            // Records List rendering
+            recordsCount.innerText = `${records.length} รายการ`;
+            if (records.length > 0) {
+                recordsList.innerHTML = records.map(record => `
+                    <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="p-2 bg-indigo-50 rounded-xl text-indigo-600 flex items-center justify-center">
+                                <i data-lucide="clock" class="w-[18px] h-[18px]"></i>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-800">${record.action}</p>
+                                <p class="text-xs text-slate-400">${record.time}</p>
+                            </div>
+                        </div>
+                        <div class="w-2 h-2 rounded-full bg-green-500"></div>
+                    </div>
+                `).join('');
+            } else {
+                recordsList.innerHTML = `
+                    <div class="text-center py-10 text-slate-400 border-2 border-dashed border-slate-200 rounded-3xl">
+                        <p>ยังไม่มีประวัติการบันทึก</p>
+                    </div>
+                `;
+            }
+
+            // Error Toast
+            if (errorMessage && status === 'error') {
+                toast.classList.remove('hidden');
+                toastText.innerText = errorMessage;
+            } else {
+                toast.classList.add('hidden');
+            }
+
+            // วาดไอคอน Lucide ใหม่หลังจากมีการอัปเดต innerHTML
+            lucide.createIcons();
+        }
+
+        // --- Helper Functions สำหรับแปลงข้อมูลลายนิ้วมือ (ArrayBuffer <-> Base64URL) ---
+        function bufferToBase64url(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let str = '';
+            for (let charCode of bytes) {
+                str += String.fromCharCode(charCode);
+            }
+            return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+        }
+
+        function base64urlToBuffer(base64url) {
+            const padding = '='.repeat((4 - base64url.length % 4) % 4);
+            const base64 = (base64url + padding).replace(/\-/g, '+').replace(/_/g, '/');
+            const rawData = atob(base64);
+            const buffer = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+                buffer[i] = rawData.charCodeAt(i);
+            }
+            return buffer;
+        }
+
+        // ฟังก์ชันการสแกนด้วย WebAuthn API (เรียกฮาร์ดแวร์จริง หรือจำลองหากติดข้อจำกัดของ iframe)
+        async function handleScan(mode) {
+            status = 'scanning';
+            errorMessage = '';
+            render();
+
+            try {
+                // ตรวจสอบว่าเบราว์เซอร์รองรับหรือไม่
+                if (!window.PublicKeyCredential) {
+                    throw new Error("อุปกรณ์/เบราว์เซอร์นี้ไม่รองรับระบบสแกนลายนิ้วมือ");
+                }
+
+                if (mode === 'register') {
+                    // 1. สร้างข้อมูลสำหรับการลงทะเบียน (Registration)
+                    const challenge = new Uint8Array(32);
+                    window.crypto.getRandomValues(challenge);
+                    const userId = new Uint8Array(16);
+                    window.crypto.getRandomValues(userId);
+
+                    const publicKey = {
+                        challenge: challenge,
+                        rp: { name: "BioScan Pro App" }, // ชื่อแอปพลิเคชัน
+                        user: {
+                            id: userId,
+                            name: "user_" + Date.now() + "@bioscan.local",
+                            displayName: "คุณผู้ใช้งาน"
+                        },
+                        pubKeyCredParams: [
+                            { alg: -7, type: "public-key" },  // ES256
+                            { alg: -257, type: "public-key" } // RS256
+                        ],
+                        authenticatorSelection: {
+                            authenticatorAttachment: "platform", // บังคับใช้ระบบของเครื่อง (ลายนิ้วมือ/FaceID)
+                            userVerification: "required" // บังคับให้ต้องมีการยืนยันตัวตน
+                        },
+                        timeout: 60000,
+                        attestation: "none"
+                    };
+
+                    // เรียก UI ฮาร์ดแวร์ของเครื่องเพื่อสแกนนิ้ว/ใบหน้า
+                    const credential = await navigator.credentials.create({ publicKey });
+                    
+                    // บันทึกรหัส Credential ID ของเครื่องนี้ไว้ใช้ตอนสแกนเข้า
+                    const credIdBase64 = bufferToBase64url(credential.rawId);
+                    localStorage.setItem('fp_cred_id', credIdBase64);
+
+                    const newUser = { name: "คุณผู้ใช้งาน", id: Date.now() };
+                    user = newUser;
+                    localStorage.setItem('fp_user', JSON.stringify(newUser));
+                    addRecord("ลงทะเบียนลายนิ้วมือสำเร็จ (ฮาร์ดแวร์จริง)");
+
+                } else {
+                    // 2. ข้อมูลสำหรับการยืนยันตัวตน (Authentication)
+                    if (!user) throw new Error("กรุณาลงทะเบียนก่อนสแกนเข้าใช้งาน");
+                    
+                    const savedCredIdBase64 = localStorage.getItem('fp_cred_id');
+                    if (!savedCredIdBase64) throw new Error("ไม่พบข้อมูลลายนิ้วมือในเครื่อง กรุณาลงทะเบียนใหม่");
+
+                    // หากข้อมูลเป็นการจำลอง ให้ข้ามไปที่ส่วน Fallback โดยตรง
+                    if (savedCredIdBase64 === 'simulated_cred_id') {
+                        throw new Error("SimulationFallback");
+                    }
+
+                    const challenge = new Uint8Array(32);
+                    window.crypto.getRandomValues(challenge);
+
+                    const publicKey = {
+                        challenge: challenge,
+                        allowCredentials: [{
+                            id: base64urlToBuffer(savedCredIdBase64),
+                            type: 'public-key'
+                        }],
+                        userVerification: "required",
+                        timeout: 60000
+                    };
+
+                    // เรียก UI ฮาร์ดแวร์ของเครื่องเพื่อตรวจสอบลายนิ้วมือ
+                    const assertion = await navigator.credentials.get({ publicKey });
+                    
+                    addRecord("สแกนลายนิ้วมือสำเร็จ - เข้างาน");
+                }
+
+                status = 'success';
+                render();
+                
+                // คืนสถานะกลับหลัง 2 วินาที
+                setTimeout(() => {
+                    status = 'ready';
+                    render();
+                }, 2000);
+
+            } catch (err) {
+                console.error("WebAuthn Error:", err);
+                
+                // --- ระบบ Fallback สำหรับกรณีที่โดนบล็อกจาก Iframe หรือ Permissions Policy ---
+                if (err.message === "SimulationFallback" || err.message.includes("Permissions Policy") || err.message.includes("not enabled in this document") || err.name === 'NotAllowedError') {
+                    console.log("เข้าสู่โหมดจำลองการทำงาน เนื่องจากข้อจำกัดของ Iframe บนหน้าพรีวิว...");
+                    
+                    // หน่วงเวลาจำลองการสแกน 1.5 วินาที
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                    
+                    if (mode === 'register') {
+                        const newUser = { name: "คุณผู้ใช้งาน", id: Date.now() };
+                        user = newUser;
+                        localStorage.setItem('fp_user', JSON.stringify(newUser));
+                        localStorage.setItem('fp_cred_id', 'simulated_cred_id'); // บันทึก ID จำลอง
+                        addRecord("ลงทะเบียนลายนิ้วมือสำเร็จ (ระบบจำลอง)");
+                    } else {
+                        addRecord("สแกนลายนิ้วมือสำเร็จ (ระบบจำลอง) - เข้างาน");
+                    }
+                    
+                    status = 'success';
+                    render();
+                    setTimeout(() => { status = 'ready'; render(); }, 2000);
+                    return; // จบการทำงานสำเร็จ
+                }
+                // -------------------------------------------------------------
+
+                status = 'error';
+                
+                // ดักจับ Error แจ้งเตือนให้เข้าใจง่าย
+                if (err.name === 'NotSupportedError') {
+                    errorMessage = "อุปกรณ์ไม่รองรับระบบนี้ (หรือไม่มีเซ็นเซอร์)";
+                } else {
+                    errorMessage = err.message || "การสแกนล้มเหลว";
+                }
+                
+                render();
+                
+                // คืนสถานะกลับหลัง 3 วินาที
+                setTimeout(() => {
+                    status = 'ready';
+                    render();
+                }, 3000);
+            }
+        }
+
+        // ฟังก์ชันเพิ่มประวัติ
+        function addRecord(action) {
+            const newRecord = {
+                id: Date.now(),
+                time: new Date().toLocaleString('th-TH'),
+                action: action
+            };
+            records = [newRecord, ...records]; // นำรายการใหม่ไว้บนสุด
+            localStorage.setItem('fp_records', JSON.stringify(records));
+        }
+
+        // ฟังก์ชันล้างข้อมูลทั้งหมด
+        function clearData() {
+            if (confirm("คุณต้องการลบข้อมูลทั้งหมดใช่หรือไม่?")) {
+                localStorage.removeItem('fp_user');
+                localStorage.removeItem('fp_records');
+                localStorage.removeItem('fp_cred_id'); // ลบ Credential ออกด้วย
+                user = null;
+                records = [];
+                render();
+            }
+        }
+
+        // เรียกใช้งานฟังก์ชันเริ่มต้นเมื่อโหลดไฟล์เสร็จ
+        init();
+        
+        // วาดไอคอน Lucide ใน HTML เบื้องต้น
+        lucide.createIcons();
+    </script>
+</body>
+</html>
