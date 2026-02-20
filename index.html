@@ -2,400 +2,425 @@
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BioScan Pro - ระบบสแกนลายนิ้วมือ</title>
-    <!-- โหลด Tailwind CSS -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ระบบบันทึกเวลาเรียน</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- โหลด Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- HTML5 QR Code Scanner -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    
     <style>
-        /* ซ่อน Element ง่ายขึ้นด้วย class hidden ของ Tailwind */
-        [data-lucide] {
-            display: inline-block;
+        body { font-family: 'Sarabun', sans-serif; }
+        /* ซ่อน Scrollbar แต่ยังเลื่อนได้ */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* อนิเมชันสำหรับ Alert */
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
         }
+        .animate-slide-up { animation: slideUp 0.3s ease-out forwards; }
     </style>
 </head>
-<body class="min-h-screen bg-slate-50 text-slate-900 font-sans pb-10">
+<body class="bg-gray-100 min-h-screen flex justify-center">
 
-    <!-- Header -->
-    <nav class="bg-indigo-600 p-4 text-white shadow-lg sticky top-0 z-10">
-        <div class="max-w-md mx-auto flex items-center gap-3">
-            <i data-lucide="fingerprint" class="w-7 h-7"></i>
-            <h1 class="text-xl font-bold">BioScan Pro</h1>
-        </div>
-    </nav>
-
-    <main class="max-w-md mx-auto p-4 space-y-6">
+    <div class="bg-gray-50 w-full max-w-md shadow-xl flex flex-col relative h-screen overflow-hidden">
         
-        <!-- Status Card (Error Banner) -->
-        <div id="error-banner" class="hidden bg-red-100 border-l-4 border-red-500 p-4 rounded flex items-start gap-3">
-            <i data-lucide="alert-circle" class="text-red-500 shrink-0 w-6 h-6"></i>
-            <p id="error-banner-text" class="text-red-700 text-sm"></p>
-        </div>
+        <!-- Header -->
+        <header class="bg-indigo-600 text-white p-4 shadow-md z-10">
+            <div class="flex justify-between items-center">
+                <div>
+                    <h1 class="text-xl font-bold">ระบบบันทึกเวลาเรียน</h1>
+                    <p class="text-indigo-200 text-sm">ครูเวร: สมศรี รักการสอน (ประตู 1)</p>
+                </div>
+                <i class="fa-regular fa-clock text-2xl text-indigo-200"></i>
+            </div>
+        </header>
 
-        <!-- User Profile Area -->
-        <div class="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center text-center">
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto pb-20 no-scrollbar relative" id="main-content">
             
-            <!-- Icon Status Container -->
-            <div id="profile-icon-container" class="w-24 h-24 rounded-full flex items-center justify-center mb-4 transition-all duration-500 bg-slate-100">
-                <!-- Icon will be injected by JS -->
+            <!-- Dashboard Stats -->
+            <div class="bg-white p-4 flex gap-4 border-b border-gray-200 sticky top-0 z-10">
+                <div class="flex-1 bg-green-50 rounded-lg p-3 border border-green-100 flex items-center gap-3 shadow-sm">
+                    <div class="bg-green-500 p-2 rounded-full text-white w-10 h-10 flex items-center justify-center">
+                        <i class="fa-solid fa-user-check"></i>
+                    </div>
+                    <div>
+                        <p class="text-xs text-green-600 font-semibold">เข้าเรียนแล้ว</p>
+                        <p class="text-xl font-bold text-green-700" id="stat-present">0 <span class="text-sm font-normal">คน</span></p>
+                    </div>
+                </div>
+                <div class="flex-1 bg-gray-50 rounded-lg p-3 border border-gray-100 flex items-center gap-3 shadow-sm">
+                    <div class="bg-gray-400 p-2 rounded-full text-white w-10 h-10 flex items-center justify-center">
+                        <i class="fa-solid fa-users"></i>
+                    </div>
+                    <div>
+                        <p class="text-xs text-gray-500 font-semibold">ยอดรวม</p>
+                        <p class="text-xl font-bold text-gray-700" id="stat-total">5 <span class="text-sm font-normal">คน</span></p>
+                    </div>
+                </div>
             </div>
 
-            <h2 id="greeting-text" class="text-2xl font-bold mb-1">ยินดีต้อนรับ</h2>
-            <p id="status-text" class="text-slate-500 text-sm mb-6">กรุณาลงทะเบียนลายนิ้วมือเพื่อเริ่มใช้งาน</p>
+            <!-- TAB: SCAN -->
+            <div id="tab-scan" class="p-4 flex flex-col items-center">
+                
+                <!-- Method Selector -->
+                <div class="flex bg-gray-200 rounded-lg p-1 mb-4 w-full max-w-xs relative">
+                    <button onclick="setScanMethod('fingerprint')" id="btn-method-finger" class="flex-1 py-2 text-sm font-medium rounded-md flex items-center justify-center gap-2 transition-colors bg-white shadow text-indigo-600">
+                        <i class="fa-solid fa-fingerprint"></i> สแกนนิ้วภายนอก
+                    </button>
+                    <button onclick="setScanMethod('qr')" id="btn-method-qr" class="flex-1 py-2 text-sm font-medium rounded-md flex items-center justify-center gap-2 transition-colors text-gray-500 hover:text-gray-700">
+                        <i class="fa-solid fa-qrcode"></i> กล้อง/QR Code
+                    </button>
+                </div>
 
-            <!-- Buttons Container -->
-            <div id="btn-container" class="w-full space-y-3">
-                <!-- Buttons will be injected by JS -->
+                <!-- SCAN AREA -->
+                <div class="bg-white w-full rounded-2xl shadow-sm border border-gray-200 overflow-hidden relative min-h-[300px] flex flex-col items-center justify-center p-4">
+                    
+                    <!-- QR Reader Container -->
+                    <div id="qr-reader" class="w-full hidden"></div>
+                    
+                    <!-- External Scanner Input (Hidden input waiting for USB scanner) -->
+                    <div id="fingerprint-area" class="w-full flex flex-col items-center text-center">
+                        <div class="w-24 h-24 rounded-full bg-indigo-50 border-4 border-indigo-100 flex items-center justify-center mb-4 text-indigo-400">
+                            <i class="fa-solid fa-fingerprint text-5xl"></i>
+                        </div>
+                        <p class="text-gray-600 font-medium mb-2">เชื่อมต่อเครื่องสแกนนิ้ว USB แล้ว</p>
+                        <p class="text-sm text-gray-400 mb-4">ให้นักเรียนทาบนิ้วที่เครื่องอ่าน<br>(หรือพิมพ์รหัสเพื่อทดสอบ)</p>
+                        
+                        <!-- ช่องรับค่าจากเครื่องสแกนนิ้วแบบ USB (ทำหน้าที่เหมือนคีย์บอร์ด) -->
+                        <input type="text" id="manual-id-input" placeholder="พิมพ์รหัสนักเรียน (เช่น 66001)" 
+                               class="border border-gray-300 rounded-lg px-4 py-2 text-center w-4/5 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                               autocomplete="off">
+                    </div>
+
+                </div>
+
+                <!-- Alert Result (Dynamic) -->
+                <div id="scan-alert" class="hidden mt-4 w-full p-4 rounded-xl border flex items-start gap-4 animate-slide-up bg-white shadow-sm">
+                    <div id="alert-icon-container" class="p-2 rounded-full text-white bg-green-500 w-10 h-10 flex items-center justify-center shrink-0">
+                        <i id="alert-icon" class="fa-solid fa-check"></i>
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex justify-between items-start">
+                            <h3 id="alert-title" class="font-bold text-green-800">บันทึกสำเร็จ</h3>
+                            <span id="alert-time" class="text-xs font-semibold text-gray-500 mt-1">08:00</span>
+                        </div>
+                        <p id="alert-name" class="text-gray-800 font-medium mt-1">ชื่อ-สกุล</p>
+                        <p id="alert-desc" class="text-sm text-gray-500">รายละเอียด</p>
+                    </div>
+                </div>
+
             </div>
-        </div>
 
-        <!-- Records List -->
-        <div class="space-y-4">
-            <div class="flex items-center justify-between px-1">
-                <h3 class="font-bold text-slate-700 flex items-center gap-2">
-                    <i data-lucide="history" class="w-5 h-5"></i>
-                    ประวัติการสแกน
-                </h3>
-                <span id="records-count" class="text-xs bg-slate-200 px-2 py-1 rounded-full text-slate-600">
-                    0 รายการ
-                </span>
+            <!-- TAB: HISTORY -->
+            <div id="tab-history" class="p-4 hidden">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="font-bold text-gray-800 flex items-center gap-2">
+                        <i class="fa-solid fa-clock-rotate-left"></i> ประวัติวันนี้
+                    </h2>
+                    <button onclick="clearHistory()" class="text-xs text-red-500 hover:text-red-700 bg-red-50 px-2 py-1 rounded">ล้างข้อมูล</button>
+                </div>
+                
+                <div id="history-container" class="space-y-3">
+                    <!-- Logs will be generated here -->
+                </div>
             </div>
 
-            <div id="records-list" class="space-y-3">
-                <!-- Records will be injected by JS -->
-            </div>
-        </div>
+        </main>
 
-    </main>
-
-    <!-- Message Toast -->
-    <div id="toast" class="hidden fixed bottom-6 left-4 right-4 bg-red-600 text-white p-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-bounce">
-        <i data-lucide="alert-circle" class="w-5 h-5"></i>
-        <span id="toast-text" class="text-sm"></span>
+        <!-- Bottom Navigation -->
+        <nav class="bg-white border-t border-gray-200 flex absolute bottom-0 w-full z-20 pb-safe">
+            <button onclick="switchTab('scan')" id="nav-scan" class="flex-1 py-3 flex flex-col items-center justify-center gap-1 text-indigo-600 transition-colors">
+                <i class="fa-solid fa-expand text-xl"></i>
+                <span class="text-[10px] font-medium">สแกน</span>
+            </button>
+            <button onclick="switchTab('history')" id="nav-history" class="flex-1 py-3 flex flex-col items-center justify-center gap-1 text-gray-400 hover:text-gray-600 transition-colors">
+                <i class="fa-solid fa-list text-xl"></i>
+                <span class="text-[10px] font-medium">ประวัติ</span>
+            </button>
+        </nav>
     </div>
 
     <script>
-        // State variables
-        let user = null;
-        let records = [];
-        let status = 'ready'; // ready, scanning, success, error
-        let errorMessage = '';
-        let isSupported = true;
+        // 1. ฐานข้อมูลนักเรียนจำลอง (ในระบบจริงดึงจาก API)
+        const studentsDb = [
+            { id: '66001', name: 'ด.ช. สมชาย รักดี', class: 'ม.1/1' },
+            { id: '66002', name: 'ด.ญ. สมหญิง ใจงาม', class: 'ม.1/1' },
+            { id: '66003', name: 'นาย มานะ อดทน', class: 'ม.4/2' },
+            { id: '66004', name: 'นางสาว ปิติ ยินดี', class: 'ม.5/1' },
+            { id: '66005', name: 'ด.ช. ชูใจ ไชโย', class: 'ม.2/3' },
+        ];
 
-        // DOM Elements
-        const errorBanner = document.getElementById('error-banner');
-        const errorBannerText = document.getElementById('error-banner-text');
-        const profileIconContainer = document.getElementById('profile-icon-container');
-        const greetingText = document.getElementById('greeting-text');
-        const statusText = document.getElementById('status-text');
-        const btnContainer = document.getElementById('btn-container');
-        const recordsCount = document.getElementById('records-count');
-        const recordsList = document.getElementById('records-list');
-        const toast = document.getElementById('toast');
-        const toastText = document.getElementById('toast-text');
+        // 2. ตัวแปรสถานะ
+        let logs = JSON.parse(localStorage.getItem('attendanceLogs')) || [];
+        let html5QrcodeScanner = null;
+        let isProcessing = false; // ป้องกันสแกนรัวๆ
 
-        // ฟังก์ชันเริ่มต้น (ตรวจสอบการรองรับและโหลดข้อมูลเก่า)
-        function init() {
-            if (!window.PublicKeyCredential) {
-                isSupported = false;
-                errorMessage = 'เบราว์เซอร์ของคุณไม่รองรับการสแกนลายนิ้วมือผ่านเว็บ';
-            }
+        // อัพเดทจำนวนนักเรียนทั้งหมด
+        document.getElementById('stat-total').innerHTML = `${studentsDb.length} <span class="text-sm font-normal">คน</span>`;
+
+        // 3. เริ่มต้นการทำงาน
+        window.onload = () => {
+            updateDashboard();
+            renderLogs();
             
-            const savedRecords = localStorage.getItem('fp_records');
-            if (savedRecords) records = JSON.parse(savedRecords);
-            
-            const savedUser = localStorage.getItem('fp_user');
-            if (savedUser) user = JSON.parse(savedUser);
-
-            render();
-        }
-
-        // ฟังก์ชันเรนเดอร์ UI อัปเดตหน้าจอตาม State ปัจจุบัน
-        function render() {
-            // Error Banner
-            if (!isSupported) {
-                errorBanner.classList.remove('hidden');
-                errorBannerText.innerText = errorMessage;
-            } else {
-                errorBanner.classList.add('hidden');
-            }
-
-            // Profile Icon Area
-            profileIconContainer.className = `w-24 h-24 rounded-full flex items-center justify-center mb-4 transition-all duration-500 ${
-                status === 'scanning' ? 'bg-indigo-100 animate-pulse' : 
-                status === 'success' ? 'bg-green-100' : 
-                status === 'error' ? 'bg-red-100' : 'bg-slate-100'
-            }`;
-
-            if (status === 'scanning') {
-                profileIconContainer.innerHTML = `<i data-lucide="fingerprint" class="text-indigo-600 animate-bounce w-12 h-12"></i>`;
-            } else if (status === 'success') {
-                profileIconContainer.innerHTML = `<i data-lucide="shield-check" class="text-green-600 w-12 h-12"></i>`;
-            } else if (status === 'error') {
-                profileIconContainer.innerHTML = `<i data-lucide="alert-circle" class="text-red-600 w-12 h-12"></i>`;
-            } else {
-                profileIconContainer.innerHTML = `<i data-lucide="fingerprint" class="text-slate-400 w-12 h-12"></i>`;
-            }
-
-            // Text Updates
-            greetingText.innerText = user ? `สวัสดี, ${user.name}` : "ยินดีต้อนรับ";
-            
-            if (status === 'scanning') {
-                statusText.innerText = "กำลังรอการยืนยัน...";
-            } else if (status === 'success') {
-                statusText.innerText = "ยืนยันตัวตนสำเร็จ";
-            } else if (user) {
-                statusText.innerText = "ระบบพร้อมสแกนเพื่อบันทึกเวลา";
-            } else {
-                statusText.innerText = "กรุณาลงทะเบียนลายนิ้วมือเพื่อเริ่มใช้งาน";
-            }
-
-            // Buttons rendering
-            let buttonsHtml = '';
-            if (user) {
-                buttonsHtml = `
-                    <button onclick="handleScan('auth')" ${status === 'scanning' ? 'disabled' : ''} class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold py-4 rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2">
-                        <i data-lucide="fingerprint" class="w-5 h-5"></i>
-                        สแกนเพื่อบันทึกเวลา
-                    </button>
-                    <button onclick="clearData()" class="text-slate-400 text-xs hover:text-red-500 flex items-center justify-center gap-1 mx-auto mt-4">
-                        <i data-lucide="trash-2" class="w-3 h-3"></i> ล้างข้อมูลระบบ
-                    </button>
-                `;
-            } else {
-                buttonsHtml = `
-                    <button onclick="handleScan('register')" ${status === 'scanning' || !isSupported ? 'disabled' : ''} class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-semibold py-4 rounded-2xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2">
-                        <i data-lucide="user-check" class="w-5 h-5"></i>
-                        ลงทะเบียนลายนิ้วมือ
-                    </button>
-                `;
-            }
-            btnContainer.innerHTML = buttonsHtml;
-
-            // Records List rendering
-            recordsCount.innerText = `${records.length} รายการ`;
-            if (records.length > 0) {
-                recordsList.innerHTML = records.map(record => `
-                    <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
-                        <div class="flex items-center gap-3">
-                            <div class="p-2 bg-indigo-50 rounded-xl text-indigo-600 flex items-center justify-center">
-                                <i data-lucide="clock" class="w-[18px] h-[18px]"></i>
-                            </div>
-                            <div>
-                                <p class="text-sm font-medium text-slate-800">${record.action}</p>
-                                <p class="text-xs text-slate-400">${record.time}</p>
-                            </div>
-                        </div>
-                        <div class="w-2 h-2 rounded-full bg-green-500"></div>
-                    </div>
-                `).join('');
-            } else {
-                recordsList.innerHTML = `
-                    <div class="text-center py-10 text-slate-400 border-2 border-dashed border-slate-200 rounded-3xl">
-                        <p>ยังไม่มีประวัติการบันทึก</p>
-                    </div>
-                `;
-            }
-
-            // Error Toast
-            if (errorMessage && status === 'error') {
-                toast.classList.remove('hidden');
-                toastText.innerText = errorMessage;
-            } else {
-                toast.classList.add('hidden');
-            }
-
-            // วาดไอคอน Lucide ใหม่หลังจากมีการอัปเดต innerHTML
-            lucide.createIcons();
-        }
-
-        // --- Helper Functions สำหรับแปลงข้อมูลลายนิ้วมือ (ArrayBuffer <-> Base64URL) ---
-        function bufferToBase64url(buffer) {
-            const bytes = new Uint8Array(buffer);
-            let str = '';
-            for (let charCode of bytes) {
-                str += String.fromCharCode(charCode);
-            }
-            return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-        }
-
-        function base64urlToBuffer(base64url) {
-            const padding = '='.repeat((4 - base64url.length % 4) % 4);
-            const base64 = (base64url + padding).replace(/\-/g, '+').replace(/_/g, '/');
-            const rawData = atob(base64);
-            const buffer = new Uint8Array(rawData.length);
-            for (let i = 0; i < rawData.length; ++i) {
-                buffer[i] = rawData.charCodeAt(i);
-            }
-            return buffer;
-        }
-
-        // ฟังก์ชันการสแกนด้วย WebAuthn API (เรียกฮาร์ดแวร์จริง หรือจำลองหากติดข้อจำกัดของ iframe)
-        async function handleScan(mode) {
-            status = 'scanning';
-            errorMessage = '';
-            render();
-
-            try {
-                // ตรวจสอบว่าเบราว์เซอร์รองรับหรือไม่
-                if (!window.PublicKeyCredential) {
-                    throw new Error("อุปกรณ์/เบราว์เซอร์นี้ไม่รองรับระบบสแกนลายนิ้วมือ");
-                }
-
-                if (mode === 'register') {
-                    // 1. สร้างข้อมูลสำหรับการลงทะเบียน (Registration)
-                    const challenge = new Uint8Array(32);
-                    window.crypto.getRandomValues(challenge);
-                    const userId = new Uint8Array(16);
-                    window.crypto.getRandomValues(userId);
-
-                    const publicKey = {
-                        challenge: challenge,
-                        rp: { name: "BioScan Pro App" }, // ชื่อแอปพลิเคชัน
-                        user: {
-                            id: userId,
-                            name: "user_" + Date.now() + "@bioscan.local",
-                            displayName: "คุณผู้ใช้งาน"
-                        },
-                        pubKeyCredParams: [
-                            { alg: -7, type: "public-key" },  // ES256
-                            { alg: -257, type: "public-key" } // RS256
-                        ],
-                        authenticatorSelection: {
-                            authenticatorAttachment: "platform", // บังคับใช้ระบบของเครื่อง (ลายนิ้วมือ/FaceID)
-                            userVerification: "required" // บังคับให้ต้องมีการยืนยันตัวตน
-                        },
-                        timeout: 60000,
-                        attestation: "none"
-                    };
-
-                    // เรียก UI ฮาร์ดแวร์ของเครื่องเพื่อสแกนนิ้ว/ใบหน้า
-                    const credential = await navigator.credentials.create({ publicKey });
-                    
-                    // บันทึกรหัส Credential ID ของเครื่องนี้ไว้ใช้ตอนสแกนเข้า
-                    const credIdBase64 = bufferToBase64url(credential.rawId);
-                    localStorage.setItem('fp_cred_id', credIdBase64);
-
-                    const newUser = { name: "คุณผู้ใช้งาน", id: Date.now() };
-                    user = newUser;
-                    localStorage.setItem('fp_user', JSON.stringify(newUser));
-                    addRecord("ลงทะเบียนลายนิ้วมือสำเร็จ (ฮาร์ดแวร์จริง)");
-
-                } else {
-                    // 2. ข้อมูลสำหรับการยืนยันตัวตน (Authentication)
-                    if (!user) throw new Error("กรุณาลงทะเบียนก่อนสแกนเข้าใช้งาน");
-                    
-                    const savedCredIdBase64 = localStorage.getItem('fp_cred_id');
-                    if (!savedCredIdBase64) throw new Error("ไม่พบข้อมูลลายนิ้วมือในเครื่อง กรุณาลงทะเบียนใหม่");
-
-                    // หากข้อมูลเป็นการจำลอง ให้ข้ามไปที่ส่วน Fallback โดยตรง
-                    if (savedCredIdBase64 === 'simulated_cred_id') {
-                        throw new Error("SimulationFallback");
+            // ดักจับการกด Enter ในช่องกรอกรหัส (สำหรับเครื่องสแกนนิ้ว USB)
+            const inputField = document.getElementById('manual-id-input');
+            inputField.addEventListener('keypress', function (e) {
+                if (e.key === 'Enter') {
+                    const studentId = this.value.trim();
+                    if(studentId) {
+                        processScan(studentId);
+                        this.value = ''; // เคลียร์ช่อง
                     }
-
-                    const challenge = new Uint8Array(32);
-                    window.crypto.getRandomValues(challenge);
-
-                    const publicKey = {
-                        challenge: challenge,
-                        allowCredentials: [{
-                            id: base64urlToBuffer(savedCredIdBase64),
-                            type: 'public-key'
-                        }],
-                        userVerification: "required",
-                        timeout: 60000
-                    };
-
-                    // เรียก UI ฮาร์ดแวร์ของเครื่องเพื่อตรวจสอบลายนิ้วมือ
-                    const assertion = await navigator.credentials.get({ publicKey });
-                    
-                    addRecord("สแกนลายนิ้วมือสำเร็จ - เข้างาน");
                 }
+            });
+            inputField.focus(); // ให้พร้อมรับค่าทันที
+        };
 
-                status = 'success';
-                render();
-                
-                // คืนสถานะกลับหลัง 2 วินาที
-                setTimeout(() => {
-                    status = 'ready';
-                    render();
-                }, 2000);
+        // 4. สลับ Method การสแกน
+        function setScanMethod(method) {
+            const btnFinger = document.getElementById('btn-method-finger');
+            const btnQr = document.getElementById('btn-method-qr');
+            const areaFinger = document.getElementById('fingerprint-area');
+            const areaQr = document.getElementById('qr-reader');
 
-            } catch (err) {
-                console.error("WebAuthn Error:", err);
-                
-                // --- ระบบ Fallback สำหรับกรณีที่โดนบล็อกจาก Iframe หรือ Permissions Policy ---
-                if (err.message === "SimulationFallback" || err.message.includes("Permissions Policy") || err.message.includes("not enabled in this document") || err.name === 'NotAllowedError') {
-                    console.log("เข้าสู่โหมดจำลองการทำงาน เนื่องจากข้อจำกัดของ Iframe บนหน้าพรีวิว...");
-                    
-                    // หน่วงเวลาจำลองการสแกน 1.5 วินาที
-                    await new Promise(resolve => setTimeout(resolve, 1500));
-                    
-                    if (mode === 'register') {
-                        const newUser = { name: "คุณผู้ใช้งาน", id: Date.now() };
-                        user = newUser;
-                        localStorage.setItem('fp_user', JSON.stringify(newUser));
-                        localStorage.setItem('fp_cred_id', 'simulated_cred_id'); // บันทึก ID จำลอง
-                        addRecord("ลงทะเบียนลายนิ้วมือสำเร็จ (ระบบจำลอง)");
-                    } else {
-                        addRecord("สแกนลายนิ้วมือสำเร็จ (ระบบจำลอง) - เข้างาน");
-                    }
-                    
-                    status = 'success';
-                    render();
-                    setTimeout(() => { status = 'ready'; render(); }, 2000);
-                    return; // จบการทำงานสำเร็จ
-                }
-                // -------------------------------------------------------------
+            hideAlert();
 
-                status = 'error';
+            if (method === 'fingerprint') {
+                // UI changes
+                btnFinger.className = "flex-1 py-2 text-sm font-medium rounded-md flex items-center justify-center gap-2 transition-colors bg-white shadow text-indigo-600";
+                btnQr.className = "flex-1 py-2 text-sm font-medium rounded-md flex items-center justify-center gap-2 transition-colors text-gray-500 hover:text-gray-700";
+                areaFinger.classList.remove('hidden');
+                areaQr.classList.add('hidden');
                 
-                // ดักจับ Error แจ้งเตือนให้เข้าใจง่าย
-                if (err.name === 'NotSupportedError') {
-                    errorMessage = "อุปกรณ์ไม่รองรับระบบนี้ (หรือไม่มีเซ็นเซอร์)";
-                } else {
-                    errorMessage = err.message || "การสแกนล้มเหลว";
+                // Stop QR Scanner
+                if (html5QrcodeScanner) {
+                    html5QrcodeScanner.clear().catch(err => console.error("Failed to clear scanner", err));
+                    html5QrcodeScanner = null;
                 }
                 
-                render();
-                
-                // คืนสถานะกลับหลัง 3 วินาที
-                setTimeout(() => {
-                    status = 'ready';
-                    render();
-                }, 3000);
+                setTimeout(() => document.getElementById('manual-id-input').focus(), 100);
+
+            } else {
+                // UI changes
+                btnQr.className = "flex-1 py-2 text-sm font-medium rounded-md flex items-center justify-center gap-2 transition-colors bg-white shadow text-indigo-600";
+                btnFinger.className = "flex-1 py-2 text-sm font-medium rounded-md flex items-center justify-center gap-2 transition-colors text-gray-500 hover:text-gray-700";
+                areaQr.classList.remove('hidden');
+                areaFinger.classList.add('hidden');
+
+                // Start QR Scanner
+                if (!html5QrcodeScanner) {
+                    html5QrcodeScanner = new Html5QrcodeScanner("qr-reader", { fps: 10, qrbox: {width: 250, height: 250}, aspectRatio: 1.0 });
+                    html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+                }
             }
         }
 
-        // ฟังก์ชันเพิ่มประวัติ
-        function addRecord(action) {
-            const newRecord = {
+        // 5. เมื่อสแกน QR Code สำเร็จ
+        function onScanSuccess(decodedText, decodedResult) {
+            if (isProcessing) return; // กำลังประมวลผล ให้ข้ามไป
+            
+            // ปกติ QR Code อาจจะมี URL ด้วย เราต้องกรองเอารหัสมา (สมมติว่าเป็นข้อความรหัสตรงๆ เช่น "66001")
+            const studentId = decodedText.trim();
+            processScan(studentId);
+            
+            // หยุดสแกน 2 วินาทีเพื่อไม่ให้รัว
+            isProcessing = true;
+            setTimeout(() => { isProcessing = false; }, 2000);
+        }
+
+        function onScanFailure(error) {
+            // ไม่ต้องทำอะไร ปล่อยให้มันหาต่อไป
+        }
+
+        // 6. ประมวลผลข้อมูลนักเรียน
+        function processScan(studentId) {
+            const student = studentsDb.find(s => s.id === studentId);
+            
+            if (!student) {
+                showAlert('error', 'ไม่พบข้อมูลนักเรียน', `รหัส: ${studentId}`, 'โปรดตรวจสอบรหัส หรือติดต่องานทะเบียน');
+                playAudio('error');
+                return;
+            }
+
+            // เช็คว่าวันนี้สแกนเข้าหรือยัง
+            const todayStr = new Date().toDateString();
+            const studentLogsToday = logs.filter(l => l.studentId === studentId && new Date(l.timestamp).toDateString() === todayStr);
+            
+            let scanType = 'in'; // ค่าเริ่มต้นคือเข้าเรียน
+            
+            if (studentLogsToday.length === 1 && studentLogsToday[0].type === 'in') {
+                scanType = 'out'; // ถ้าเคยเข้าแล้ว แสดงว่าสแกนออก
+            } else if (studentLogsToday.length >= 2) {
+                showAlert('error', 'สแกนซ้ำ', student.name, 'นักเรียนได้สแกนเข้าและออกไปแล้วในวันนี้');
+                playAudio('error');
+                return;
+            }
+
+            // สร้าง Record ใหม่
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            
+            const newLog = {
                 id: Date.now(),
-                time: new Date().toLocaleString('th-TH'),
-                action: action
+                studentId: student.id,
+                name: student.name,
+                class: student.class,
+                time: timeStr,
+                timestamp: now.toISOString(),
+                type: scanType
             };
-            records = [newRecord, ...records]; // นำรายการใหม่ไว้บนสุด
-            localStorage.setItem('fp_records', JSON.stringify(records));
+
+            // บันทึก
+            logs.unshift(newLog); // เอาไว้บนสุด
+            localStorage.setItem('attendanceLogs', JSON.stringify(logs));
+            
+            // อัพเดทหน้าจอ
+            updateDashboard();
+            renderLogs();
+            
+            // แสดงผล
+            const title = scanType === 'in' ? 'บันทึกเข้าเรียนสำเร็จ' : 'บันทึกกลับบ้านสำเร็จ';
+            showAlert(scanType, title, student.name, `รหัส: ${student.id} | ชั้น: ${student.class}`, timeStr);
+            playAudio('success');
         }
 
-        // ฟังก์ชันล้างข้อมูลทั้งหมด
-        function clearData() {
-            if (confirm("คุณต้องการลบข้อมูลทั้งหมดใช่หรือไม่?")) {
-                localStorage.removeItem('fp_user');
-                localStorage.removeItem('fp_records');
-                localStorage.removeItem('fp_cred_id'); // ลบ Credential ออกด้วย
-                user = null;
-                records = [];
-                render();
+        // 7. จัดการ Alert UI
+        function showAlert(type, title, name, desc, time = '') {
+            const alertBox = document.getElementById('scan-alert');
+            const iconContainer = document.getElementById('alert-icon-container');
+            const icon = document.getElementById('alert-icon');
+            
+            document.getElementById('alert-title').innerText = title;
+            document.getElementById('alert-name').innerText = name;
+            document.getElementById('alert-desc').innerText = desc;
+            document.getElementById('alert-time').innerText = time;
+
+            alertBox.classList.remove('hidden');
+            
+            // รีเซ็ตคลาส
+            alertBox.className = "mt-4 w-full p-4 rounded-xl border flex items-start gap-4 animate-slide-up bg-white shadow-sm";
+            iconContainer.className = "p-2 rounded-full text-white w-10 h-10 flex items-center justify-center shrink-0";
+
+            if (type === 'in') {
+                alertBox.classList.add('border-green-200', 'bg-green-50');
+                iconContainer.classList.add('bg-green-500');
+                icon.className = "fa-solid fa-user-check";
+                document.getElementById('alert-title').className = "font-bold text-green-800";
+            } else if (type === 'out') {
+                alertBox.classList.add('border-blue-200', 'bg-blue-50');
+                iconContainer.classList.add('bg-blue-500');
+                icon.className = "fa-solid fa-user-minus";
+                document.getElementById('alert-title').className = "font-bold text-blue-800";
+            } else {
+                alertBox.classList.add('border-red-200', 'bg-red-50');
+                iconContainer.classList.add('bg-red-500');
+                icon.className = "fa-solid fa-triangle-exclamation";
+                document.getElementById('alert-title').className = "font-bold text-red-800";
             }
         }
 
-        // เรียกใช้งานฟังก์ชันเริ่มต้นเมื่อโหลดไฟล์เสร็จ
-        init();
-        
-        // วาดไอคอน Lucide ใน HTML เบื้องต้น
-        lucide.createIcons();
+        function hideAlert() {
+            document.getElementById('scan-alert').classList.add('hidden');
+        }
+
+        // 8. อัพเดทตัวเลข Dashboard
+        function updateDashboard() {
+            const todayStr = new Date().toDateString();
+            // นับคนที่สแกน 'in' ในวันนี้
+            const presentCount = new Set(logs.filter(l => l.type === 'in' && new Date(l.timestamp).toDateString() === todayStr).map(l => l.studentId)).size;
+            document.getElementById('stat-present').innerHTML = `${presentCount} <span class="text-sm font-normal">คน</span>`;
+        }
+
+        // 9. วาดประวัติ
+        function renderLogs() {
+            const container = document.getElementById('history-container');
+            container.innerHTML = '';
+
+            const todayStr = new Date().toDateString();
+            const todayLogs = logs.filter(l => new Date(l.timestamp).toDateString() === todayStr);
+
+            if (todayLogs.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-10 text-gray-400">
+                        <i class="fa-solid fa-clock-rotate-left text-5xl mb-3 opacity-20"></i>
+                        <p>ยังไม่มีประวัติการสแกนในวันนี้</p>
+                    </div>`;
+                return;
+            }
+
+            todayLogs.forEach(log => {
+                const colorTheme = log.type === 'in' ? 'green' : 'blue';
+                const typeText = log.type === 'in' ? 'เข้า' : 'ออก';
+                
+                const logEl = document.createElement('div');
+                logEl.className = "bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex items-center justify-between";
+                logEl.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <div class="w-1.5 h-10 rounded-full bg-${colorTheme}-400"></div>
+                        <div>
+                            <p class="font-medium text-gray-800 text-sm">${log.name}</p>
+                            <p class="text-xs text-gray-500">${log.class} | ${log.studentId}</p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[10px] font-bold px-2 py-1 rounded-full bg-${colorTheme}-100 text-${colorTheme}-700">
+                            ${typeText}
+                        </span>
+                        <p class="text-xs text-gray-400 mt-1">${log.time}</p>
+                    </div>
+                `;
+                container.appendChild(logEl);
+            });
+        }
+
+        // 10. สลับหน้าจอ สแกน / ประวัติ
+        function switchTab(tab) {
+            const tabScan = document.getElementById('tab-scan');
+            const tabHistory = document.getElementById('tab-history');
+            const navScan = document.getElementById('nav-scan');
+            const navHistory = document.getElementById('nav-history');
+
+            if (tab === 'scan') {
+                tabScan.classList.remove('hidden');
+                tabHistory.classList.add('hidden');
+                navScan.className = "flex-1 py-3 flex flex-col items-center justify-center gap-1 text-indigo-600 transition-colors";
+                navHistory.className = "flex-1 py-3 flex flex-col items-center justify-center gap-1 text-gray-400 hover:text-gray-600 transition-colors";
+                
+                // โฟกัสช่องกรอกอัตโนมัติเผื่อใช้เครื่องสแกนนิ้ว
+                if(!document.getElementById('fingerprint-area').classList.contains('hidden')) {
+                    document.getElementById('manual-id-input').focus();
+                }
+
+            } else {
+                tabScan.classList.add('hidden');
+                tabHistory.classList.remove('hidden');
+                navHistory.className = "flex-1 py-3 flex flex-col items-center justify-center gap-1 text-indigo-600 transition-colors";
+                navScan.className = "flex-1 py-3 flex flex-col items-center justify-center gap-1 text-gray-400 hover:text-gray-600 transition-colors";
+            }
+        }
+
+        function clearHistory() {
+            if(confirm('คุณต้องการล้างประวัติการสแกนของวันนี้ทั้งหมดใช่หรือไม่?')) {
+                logs = [];
+                localStorage.removeItem('attendanceLogs');
+                updateDashboard();
+                renderLogs();
+            }
+        }
+
+        // จำลองเสียงตี๊ด
+        function playAudio(type) {
+            // ในระบบจริงสามารถใส่ไฟล์ MP3 ได้
+            // const audio = new Audio(type === 'success' ? 'success.mp3' : 'error.mp3');
+            // audio.play();
+        }
+
     </script>
 </body>
 </html>
