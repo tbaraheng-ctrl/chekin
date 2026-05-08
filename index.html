@@ -7740,7 +7740,7 @@
                                             <tr>
                                                 <th className="p-2 md:p-3 border-b text-center w-8 md:w-12 text-[10px] md:text-sm font-medium md:font-bold">ที่</th>
                                                 <th className="hidden md:table-cell p-3 border-b w-24 text-center text-sm font-bold">รหัส</th>
-                                                <th className="p-2 md:p-3 border-b text-xs md:text-sm font-medium md:font-bold">ชื่อ-สกุล</th>
+                                                <th className="p-2 md:p-3 border-b text-sm md:text-base font-medium md:font-bold">ชื่อ-สกุล</th>
                                                 <th className="p-2 md:p-3 border-b text-center w-[110px] md:w-40 text-xs md:text-sm font-medium md:font-bold">สถานะ</th>
                                             </tr>
                                         </thead>
@@ -7756,8 +7756,8 @@
                                                     <tr key={stu.code} className={`hover:bg-gray-50 transition ${isLeaveAuto ? 'bg-yellow-50' : currentStatus === 'หนีเรียน' ? 'bg-rose-50' : isScanned ? 'bg-blue-50' : ''}`}>
                                                         <td className="p-1 md:p-3 text-center text-gray-500 font-bold text-[10px] md:text-sm">{idx + 1}</td>
                                                         <td className="hidden md:table-cell p-3 text-center font-mono text-sm">{stu.code}</td>
-                                                        <td className="p-2 md:p-3 font-bold text-gray-800 text-xs md:text-sm">
-                                                            <div className="leading-tight">{stu.name}</div>
+                                                        <td className="p-2 md:p-3 font-bold text-gray-800">
+                                                            <div className="leading-tight text-base md:text-lg" style={{ fontFamily: "'Sarabun', sans-serif" }}>{stu.name}</div>
                                                             <div className="md:hidden text-[9px] text-gray-500 font-mono mt-0.5 tracking-wider">{stu.code}</div>
                                                             <div className="flex flex-wrap gap-1 mt-1">
                                                                 {isScanned && <span className="text-[8px] md:text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full border border-blue-300"><i className="fa-solid fa-qrcode"></i> สแกน</span>}
