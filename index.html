@@ -64,24 +64,26 @@
 
         // --- ตั้งค่าระบบ (Configurations) ---
         // 👇 นำลิงก์ Web App อันใหม่ล่าสุดมาวางทับลิงก์เดิมในเครื่องหมายคำพูดด้านล่างนี้ 👇
-        const GAS_URL = "https://script.google.com/macros/s/AKfycbwW6yfFIO_wYqFZ8J55EAIBM6_OH2SjxMgDea1FYayuedNZxXeHCgXoeMzp0JWkJ0m_/exec";
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbwNbh3ZISvl6N-g0ApsTChBKP1WLQEkEjNUtFRejScZW7MWnfC7LupQIueR4ZMBJB2VQQ/exec";
         
-        // --- ระบบสื่อสารกับ Google App Script (เปลี่ยนเป็น POST แบบฟอร์มมาตรฐาน) ---
+        // --- ระบบสื่อสารกับ Google App Script ---
         const callGAS = async (action, payload) => {
-            const formBody = new URLSearchParams();
-            formBody.append('action', action);
-            if (payload) {
-                // 👇 แนบสถานะสวิตช์ Line Notify ปัจจุบัน ส่งตรงไปบังคับหลังบ้านทุกครั้ง 👇
-                try {
-                    const savedLineSettings = localStorage.getItem('ns_line_notify');
-                    if (savedLineSettings) {
-                        payload.clientLineSettings = JSON.parse(savedLineSettings);
-                    }
-                } catch(e) {}
-                // 👆 ------------------------------------------------------- 👆
-                
-                formBody.append('payload', JSON.stringify(payload));
-            }
+            // [แก้ไข]: จัดการแพ็คข้อมูลให้เป็นรูปแบบ JSON โดยตรง เพื่อให้ตรงกับที่ระบบหลังบ้านรอรับ
+            let finalPayload = typeof payload === 'object' && !Array.isArray(payload) && payload !== null ? { ...payload } : (payload || {});
+            
+            // 👇 แนบสถานะสวิตช์ Line Notify ปัจจุบัน ส่งตรงไปบังคับหลังบ้านทุกครั้ง 👇
+            try {
+                const savedLineSettings = localStorage.getItem('ns_line_notify');
+                if (savedLineSettings) {
+                    finalPayload.clientLineSettings = JSON.parse(savedLineSettings);
+                }
+            } catch(e) {}
+            // 👆 ------------------------------------------------------- 👆
+            
+            const requestData = {
+                action: action,
+                payload: finalPayload
+            };
 
             // ฟังก์ชันแปลงคำนำหน้าชื่อ ผู้อำนวยการ -> ผอ. และ รองผู้อำนวยการ -> รอง แบบอัตโนมัติ (ดักจับเข้มงวดขึ้น)
             const formatDataNames = (obj) => {
@@ -125,10 +127,8 @@
             try {
                 const response = await fetch(GAS_URL, {
                     method: 'POST',
-                    body: formBody,
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    }
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // ใช้รูปแบบนี้เพื่อหลีกเลี่ยงปัญหา CORS
+                    body: JSON.stringify(requestData)
                 });
                 
                 const rawData = await response.json();
@@ -141,7 +141,6 @@
                 }
             } catch (error) {
                 console.error("GAS Request Error:", error);
-                // จัดการข้อผิดพลาด Failed to fetch ให้แจ้งเตือนสาเหตุที่ชัดเจน
                 if (error.message.includes('Failed to fetch') || error.name === 'TypeError') {
                     throw new Error(
                         'ไม่สามารถเชื่อมต่อฐานข้อมูลได้ (Failed to fetch)\n\n' +
@@ -172,14 +171,16 @@
                     } else if (obj !== null && typeof obj === 'object') {
                         const newObj = {};
                         for (let key in obj) { newObj[key] = formatDataNames(obj[key]); }
-                        if (newObj.name) {
+                        
+                        // บังคับเปลี่ยนคำนำหน้าชื่อ หากมีคีย์ name (แก้ไขป้องกันไปเติมคำว่าครูในรายการพฤติกรรม/กิจกรรม)
+                        if (newObj.name && newObj.score === undefined && newObj.type !== 'บวก' && newObj.type !== 'ลบ' && newObj.totalDays === undefined && newObj.capacity === undefined) {
                             let originalName = String(newObj.name).trim();
                             let cleanName = originalName.replace(/^(นาย|นางสาว|นาง|ด\.ช\.|ด\.ญ\.|ว่าที่\s*ร\.ต\.|ว่าที่ร้อยตรี|ครู|ผู้อำนวยการโรงเรียน|ผู้อำนวยการ|รองผู้อำนวยการ|ผอ\.|รอง)\s*/g, '').trim();
                             const isExecutive = newObj.role === 'executive' || originalName.includes('ผอ.') || originalName.includes('ผู้อำนวยการ');
                             const isDeputy = originalName.includes('รอง');
                             if (isExecutive) {
                                 newObj.name = isDeputy ? `รอง${cleanName}` : `ผอ.${cleanName}`;
-                            } else if (newObj.role === 'user' || newObj.role === 'admin' || newObj.role === 'dept_admin') {
+                            } else if (newObj.role === 'user' || newObj.role === 'admin' || newObj.role === 'dept_admin' || newObj.role === 'administrative') {
                                 newObj.name = `ครู${cleanName}`;
                             } else if (originalName.includes('ครู')) {
                                 newObj.name = `ครู${cleanName}`;
@@ -306,19 +307,44 @@
                 <div className="min-h-screen flex items-center justify-center bg-ns-blue p-4">
                     <div className="glass-panel p-8 rounded-2xl shadow-2xl w-full max-w-md relative">
                         {isInitialLoading ? (
-                            <div className="flex flex-col items-center justify-center py-10 animate-[fadeIn_0.5s_ease-out]">
-                                <div className="relative w-36 h-36 mb-6 flex items-center justify-center">
-                                    {/* ไอคอนหมุนรอบๆ */}
-                                    <div className="absolute inset-0 rounded-full border-t-4 border-b-4 border-ns-yellow animate-spin opacity-80"></div>
-                                    <div className="absolute inset-3 rounded-full border-r-4 border-l-4 border-ns-blue animate-[spin_1.5s_linear_infinite_reverse] opacity-60"></div>
+                          <div className="flex flex-col items-center justify-center py-16 animate-[fadeIn_0.5s_ease-out]">
+                                {/* ส่วนวงแหวนและโลโก้ */}
+                                <div className="relative flex items-center justify-center mb-8">
+                                    {/* วงแหวนพื้นหลังแบบจาง */}
+                                    <div className="absolute w-40 h-40 border-4 border-gray-100 rounded-full"></div>
                                     
-                                    {/* ไอคอนอาคารเรียนตรงกลาง (แทนโลโก้ภาพแตก) */}
-                                    <div className="w-full h-full bg-ns-yellow rounded-full flex items-center justify-center shadow-lg relative z-10 scale-75">
-                                        <i className="fa-solid fa-school text-5xl text-ns-blue"></i>
+                                    {/* วงแหวนหมุนด้านนอก (สีน้ำเงิน) */}
+                                    <div className="absolute w-40 h-40 rounded-full border-4 border-transparent border-t-ns-blue border-r-ns-blue animate-[spin_2s_linear_infinite] opacity-90 shadow-lg"></div>
+                                    
+                                    {/* วงแหวนหมุนด้านใน (สีเหลือง หมุนทวนเข็ม) */}
+                                    <div className="absolute w-32 h-32 rounded-full border-4 border-transparent border-b-ns-yellow border-l-ns-yellow animate-[spin_1.5s_linear_infinite_reverse] opacity-90"></div>
+                                    
+                                    {/* ไอคอนโรงเรียนตรงกลาง */}
+                                    <div className="relative z-10 w-24 h-24 bg-gradient-to-br from-ns-blue to-blue-800 rounded-full flex items-center justify-center shadow-xl border-4 border-white">
+                                        <i className="fa-solid fa-school text-4xl text-white drop-shadow-md"></i>
                                     </div>
                                 </div>
-                                <h2 className="text-xl font-bold text-ns-blue mb-2 animate-pulse">กำลังเตรียมความพร้อม</h2>
-                                <p className="text-gray-500 font-medium">กรุณารอสักครู่...</p>
+
+                                {/* ส่วนข้อความ */}
+                                <div className="text-center space-y-2">
+                                    <h1 className="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-ns-blue to-blue-600 tracking-tight drop-shadow-sm">
+                                        NS Student Care
+                                    </h1>
+                                    <h2 className="text-lg md:text-xl font-bold text-gray-700">
+                                        โรงเรียนนราสิกขาลัย
+                                    </h2>
+                                    
+                                    {/* แอนิเมชันจุดกำลังโหลด */}
+                                    <div className="flex items-center justify-center space-x-2 pt-4">
+                                        <div className="w-2.5 h-2.5 bg-ns-yellow rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                                        <div className="w-2.5 h-2.5 bg-ns-blue rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                                        <div className="w-2.5 h-2.5 bg-ns-yellow rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                                    </div>
+                                    
+                                    <p className="text-sm font-medium text-gray-500 mt-2 animate-pulse">
+                                        กำลังเตรียมความพร้อม กรุณารอสักครู่...
+                                    </p>
+                                </div>
                             </div>
                         ) : (
                             <React.Fragment>
@@ -382,6 +408,10 @@
             const [lateInfo, setLateInfo] = useState(null);
             const [exemptInfo, setExemptInfo] = useState(null);
             
+            // --- เพิ่ม State สำหรับกรอกรหัสด้วยมือ ---
+            const [manualInput, setManualInput] = useState('');
+            const [previewStudent, setPreviewStudent] = useState(null);
+            
             const [now, setNow] = useState(new Date());
 
             useEffect(() => {
@@ -416,6 +446,7 @@
             const latestStudentList = useRef(studentList);
             const latestTimeSettings = useRef(timeSettings);
             const latestBehaviors = useRef(behaviorsSetting || []);
+            const isProcessingRef = useRef(false); // ใช้ useRef แทนตัวแปร Local เพื่อให้ทำงานร่วมกับกรอกมือได้
             
             useEffect(() => { latestRecords.current = records; }, [records]);
             useEffect(() => { latestStudentList.current = studentList; }, [studentList]);
@@ -436,12 +467,11 @@
             const { isOutMode, isLate } = determineModeAndLate(timeStr, timeSettings.startIn, timeSettings.lateTime, timeSettings.startOut);
             const modeName = isOutMode ? "บันทึกออกโรงเรียน" : "บันทึกเข้าโรงเรียน";
 
-            useEffect(() => {
-                const scanner = new Html5Qrcode("reader");
-                const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+            // 👇 ฟังก์ชันหลักในการบันทึกข้อมูล (ใช้ร่วมกันทั้งกล้องสแกน และ กรอกรหัสด้วยมือ) 👇
+            const processScanData = async (decodedText) => {
+                if (isProcessingRef.current) return; 
+                
                 let isGpsValid = false;
-                let isProcessingQR = false;
-
                 if (currentGps) {
                     const dist = getDistanceFromLatLonInM(
                         currentGps.lat, currentGps.lng,
@@ -449,141 +479,280 @@
                     );
                     if (dist <= 200) {
                         isGpsValid = true;
-                        setStatus("พร้อมสแกนคิวอาร์โค้ด");
-                    } else {
-                        setStatus(`คุณอยู่นอกพื้นที่โรงเรียน (ระยะห่าง ${Math.round(dist)} เมตร)`);
                     }
                 }
 
-                scanner.start({ facingMode: "environment" }, config, 
-                    async (decodedText) => {
-                        if (isProcessingQR) return; 
-                        
-                        if(!isGpsValid) {
-                            alert("ไม่สามารถบันทึกได้ เนื่องจากคุณอยู่นอกพื้นที่โรงเรียน");
-                            return;
-                        }
+                if(!isGpsValid) {
+                    alert("ไม่สามารถบันทึกได้ เนื่องจากคุณอยู่นอกพื้นที่โรงเรียน");
+                    return;
+                }
 
-                        isProcessingQR = true;
-                        setStatus("กำลังตรวจสอบข้อมูล...");
+                isProcessingRef.current = true;
+                setStatus("กำลังตรวจสอบข้อมูล...");
 
-                        const scanNow = new Date();
-                        const scanTimeStr = `${String(scanNow.getHours()).padStart(2, '0')}:${String(scanNow.getMinutes()).padStart(2, '0')}`;
-                        const scanDateStr = `${String(scanNow.getDate()).padStart(2, '0')}/${String(scanNow.getMonth() + 1).padStart(2, '0')}/${scanNow.getFullYear() + 543}`;
-                        
-                        const { isOutMode: scanIsOutMode, isLate: scanIsLate } = determineModeAndLate(scanTimeStr, latestTimeSettings.current.startIn, latestTimeSettings.current.lateTime, latestTimeSettings.current.startOut);
-                        const currentType = scanIsOutMode ? "ออก" : "เข้า";
+                const scanNow = new Date();
+                const scanTimeStr = `${String(scanNow.getHours()).padStart(2, '0')}:${String(scanNow.getMinutes()).padStart(2, '0')}`;
+                const scanDateStr = `${String(scanNow.getDate()).padStart(2, '0')}/${String(scanNow.getMonth() + 1).padStart(2, '0')}/${scanNow.getFullYear() + 543}`;
+                
+                const { isOutMode: scanIsOutMode, isLate: scanIsLate } = determineModeAndLate(scanTimeStr, latestTimeSettings.current.startIn, latestTimeSettings.current.lateTime, latestTimeSettings.current.startOut);
+                const currentType = scanIsOutMode ? "ออก" : "เข้า";
 
-                        const decodedClean = String(decodedText).trim();
-                        const studentInfo = latestStudentList.current.find(s => s.code && String(s.code).trim() === decodedClean);
-                        
-                        if (!studentInfo) {
-                            setStatus("ไม่พบข้อมูลนักเรียนในระบบ");
-                            setTimeout(() => { setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingQR = false; }, 2000);
-                            return;
-                        }
+                const decodedClean = String(decodedText).trim();
+                const studentInfo = latestStudentList.current.find(s => s.code && String(s.code).trim() === decodedClean);
+                
+                if (!studentInfo) {
+                    setStatus("ไม่พบข้อมูลนักเรียนในระบบ");
+                    setTimeout(() => { setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingRef.current = false; }, 2000);
+                    return;
+                }
 
-                        const isDuplicate = latestRecords.current.some(r => String(r.studentId).trim() === decodedClean && r.date === scanDateStr && r.type === currentType);
-                        if (isDuplicate) {
-                            setDuplicateError("คุณได้สแกนบันทึกเข้าหรือออกแล้วก่อนหน้านี้");
-                            setStatus("ข้อมูลซ้ำ");
-                            setTimeout(() => { setDuplicateError(null); setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingQR = false; }, 2000);
-                            return;
-                        }
-                        
+                const safeFormatDate = (dateStr) => {
+                    if (!dateStr) return '';
+                    let str = String(dateStr).trim();
+                    if (str.includes('T') || str.match(/^\d{4}-\d{2}-\d{2}/)) {
                         try {
-                            setTimeout(() => {
-                                const studentExemption = (exemptions || []).find(ex => String(ex.studentId).trim() === decodedClean);
-                                let isExempted = false;
-                                if (studentExemption && scanIsLate && currentType === "เข้า") {
-                                    isExempted = true; // ให้ยกเว้นไว้ก่อน
-                                    // แต่ถ้ามีกำหนดเวลา และเวลาที่สแกน "เกิน" เวลาที่อนุญาต ถือว่าสายตามปกติ
-                                    if (studentExemption.allowedLateTime && scanTimeStr > studentExemption.allowedLateTime) {
-                                        isExempted = false; 
-                                    }
-                                }
-                                const finalStatusStr = isExempted ? "ยกเว้นสาย" : (scanIsLate ? "สาย" : "ปกติ");
-
-                                const newRecord = {
-                                    id: Date.now(),
-                                    date: scanDateStr,
-                                    studentId: decodedClean,
-                                    name: studentInfo.name,
-                                    room: `${studentInfo.classLevel}/${studentInfo.room}`,
-                                    time: scanTimeStr,
-                                    statusStr: finalStatusStr,
-                                    type: currentType,
-                                    recorder: user ? user.name : 'ระบบอัตโนมัติ'
-                                };
-                                
-                                setScanResult(newRecord);
-                                setStatus("บันทึกสำเร็จ");
-
-                                if (isExempted) {
-                                    setExemptInfo(studentExemption);
-                                } else if (scanIsLate && currentType === "เข้า") {
-                                    const pastLates = latestRecords.current.filter(r => String(r.studentId).trim() === decodedClean && String(r.type).trim() === 'เข้า' && String(r.statusStr).trim() === 'สาย');
-                                    const lateCount = pastLates.length + 1; 
-                                    
-                                    let searchKeyword = `ครั้งที่ ${lateCount}`;
-                                    if (lateCount > 3) {
-                                        searchKeyword = "เกิน 3 ครั้ง";
-                                    }
-
-                                    let lateBehavior = latestBehaviors.current.find(b => b.name.includes('สาย') && b.name.includes(searchKeyword));
-                                    
-                                    if (!lateBehavior) {
-                                        let defaultScore = -5;
-                                        if (lateCount === 2) defaultScore = -10;
-                                        if (lateCount === 3) defaultScore = -15;
-                                        if (lateCount > 3) defaultScore = -20;
-                                        
-                                        lateBehavior = latestBehaviors.current.find(b => b.name.includes('สาย') && !b.name.includes('ครั้ง')) || 
-                                                       { name: 'มาโรงเรียนสาย', score: defaultScore, type: 'ลบ' };
-                                    }
-
-                                    const deductScore = -Math.abs(Number(lateBehavior.score));
-                                    const finalBehaviorName = lateBehavior.name.includes(searchKeyword) ? lateBehavior.name : `${lateBehavior.name} (${searchKeyword})`;
-
-                                    const newBehaviorRecord = {
-                                        id: Date.now() + 1,
-                                        date: scanDateStr,
-                                        studentId: decodedClean,
-                                        name: studentInfo.name,
-                                        room: `${studentInfo.classLevel}/${studentInfo.room}`,
-                                        behaviorName: finalBehaviorName,
-                                        score: deductScore,
-                                        recorder: (user && user.name) || 'ระบบอัตโนมัติ',
-                                        type: 'ลบ'
-                                    };
-
-                                    callGAS('saveBehaviorRecord', { ...newBehaviorRecord, targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48' })
-                                        .catch(e => console.log("Auto behavior error:", e));
-                                    
-                                    if (setBehaviorRecords) {
-                                        setBehaviorRecords(prev => [newBehaviorRecord, ...(prev || [])]);
-                                    }
-                                    
-                                    setLateInfo({ count: lateCount, score: deductScore, label: searchKeyword });
-                                } else {
-                                    setLateInfo(null);
-                                }
-                                
-                                latestRecords.current = [newRecord, ...latestRecords.current];
-                                onRecordSaved(newRecord);
-
-                                setTimeout(() => { setScanResult(null); setLateInfo(null); setExemptInfo(null); setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingQR = false; }, 3000);
-                            }, 300);
-                        } catch(err) {
-                            setStatus("เกิดข้อผิดพลาดในการบันทึก");
-                            setTimeout(() => { setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingQR = false; }, 2000);
+                            const d = new Date(str);
+                            if (!isNaN(d.getTime())) return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear() < 2500 ? d.getFullYear() + 543 : d.getFullYear()}`;
+                        } catch(e) {}
+                    }
+                    if (str.includes('/')) {
+                        const parts = str.split('/');
+                        if (parts.length === 3) {
+                            let y = Number(parts[2]);
+                            if (y < 2500 && y > 1900) y += 543;
+                            return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${y}`;
                         }
-                    },
-                    (err) => {}
-                ).catch(err => setStatus("ไม่สามารถเปิดกล้องได้"));
+                    }
+                    return str;
+                };
 
-                return () => { scanner.stop().catch(e => console.log(e)); };
+                const isDuplicate = latestRecords.current.some(r => 
+                    String(r.studentId).trim() === decodedClean && 
+                    safeFormatDate(r.date) === scanDateStr && 
+                    r.type === currentType
+                );
+
+                if (isDuplicate) {
+                    setDuplicateError("คุณได้สแกนบันทึกเข้าหรือออกแล้วก่อนหน้านี้");
+                    setStatus("ข้อมูลซ้ำ");
+                    setTimeout(() => { setDuplicateError(null); setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingRef.current = false; }, 2000);
+                    return;
+                }
+                
+                try {
+                    setTimeout(() => {
+                        const studentExemption = (exemptions || []).find(ex => String(ex.studentId).trim() === decodedClean);
+                        let isExempted = false;
+                        if (studentExemption && scanIsLate && currentType === "เข้า") {
+                            isExempted = true; 
+                            if (studentExemption.allowedLateTime && scanTimeStr > studentExemption.allowedLateTime) {
+                                isExempted = false; 
+                            }
+                        }
+                        const finalStatusStr = isExempted ? "ยกเว้นสาย" : (scanIsLate ? "สาย" : "ปกติ");
+
+                        const newRecord = {
+                            id: Date.now(),
+                            date: scanDateStr,
+                            studentId: decodedClean,
+                            name: studentInfo.name,
+                            room: `${studentInfo.classLevel}/${studentInfo.room}`,
+                            time: scanTimeStr,
+                            statusStr: finalStatusStr,
+                            type: currentType,
+                            recorder: user ? user.name : 'ระบบอัตโนมัติ'
+                        };
+                        
+                        setScanResult(newRecord);
+                        setStatus("บันทึกสำเร็จ");
+
+                        if (isExempted) {
+                            setExemptInfo(studentExemption);
+                        } else if (scanIsLate && currentType === "เข้า") {
+                            const pastLates = latestRecords.current.filter(r => String(r.studentId).trim() === decodedClean && String(r.type).trim() === 'เข้า' && String(r.statusStr).trim() === 'สาย');
+                            const lateCount = pastLates.length + 1; 
+                            
+                            let searchKeyword = `ครั้งที่ ${lateCount}`;
+                            if (lateCount > 3) {
+                                searchKeyword = "เกิน 3 ครั้ง";
+                            }
+
+                            let lateBehavior = latestBehaviors.current.find(b => b.name.includes('สาย') && b.name.includes(searchKeyword));
+                            
+                            if (!lateBehavior) {
+                                let defaultScore = -5;
+                                if (lateCount === 2) defaultScore = -10;
+                                if (lateCount === 3) defaultScore = -15;
+                                if (lateCount > 3) defaultScore = -20;
+                                
+                                lateBehavior = latestBehaviors.current.find(b => b.name.includes('สาย') && !b.name.includes('ครั้ง')) || 
+                                               { name: 'มาโรงเรียนสาย', score: defaultScore, type: 'ลบ' };
+                            }
+
+                            const deductScore = -Math.abs(Number(lateBehavior.score));
+                            const finalBehaviorName = lateBehavior.name.includes(searchKeyword) ? lateBehavior.name : `${lateBehavior.name} (${searchKeyword})`;
+
+                            const newBehaviorRecord = {
+                                id: Date.now() + 1,
+                                date: scanDateStr,
+                                studentId: decodedClean,
+                                name: studentInfo.name,
+                                room: `${studentInfo.classLevel}/${studentInfo.room}`,
+                                behaviorName: finalBehaviorName,
+                                score: deductScore,
+                                recorder: (user && user.name) || 'ระบบอัตโนมัติ',
+                                type: 'ลบ'
+                            };
+
+                            callGAS('saveBehaviorRecord', { ...newBehaviorRecord, targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48' })
+                                .catch(e => console.log("Auto behavior error:", e));
+                            
+                            if (setBehaviorRecords) {
+                                setBehaviorRecords(prev => [newBehaviorRecord, ...(prev || [])]);
+                            }
+                            
+                            setLateInfo({ count: lateCount, score: deductScore, label: searchKeyword });
+
+                            // --- เพิ่มระบบอัปเดตคาบ 0 เป็น "สาย" อัตโนมัติ (สแกนผ่านกล้อง) ---
+                            const classLevelNum = String(studentInfo.classLevel).replace(/[^0-9]/g, '');
+                            const hrSubCode = `HR00${classLevelNum}`;
+                            const autoAttPayload = {
+                                targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48',
+                                date: scanDateStr,
+                                period: '0',
+                                subjectCode: hrSubCode,
+                                subjectName: 'กิจกรรมหน้าเสาธง/โฮมรูม',
+                                room: `${studentInfo.classLevel}/${studentInfo.room}`,
+                                teacherName: 'ระบบอัตโนมัติ',
+                                records: [{ studentId: studentInfo.code, studentName: studentInfo.name, status: 'สาย', isChanged: true }]
+                            };
+                            callGAS('saveAttendanceBatch', { 
+                                attendance: [autoAttPayload], behaviorsToAdd: [], behaviorsToDelete: [], leavesToAdd: [], leavesToEdit: [], leavesToDelete: [] 
+                            }).catch(e => console.log("Auto attendance error:", e));
+                            // ------------------------------------------------
+
+                        } else {
+                            setLateInfo(null);
+                        }
+                        
+                        latestRecords.current = [newRecord, ...latestRecords.current];
+                        onRecordSaved(newRecord);
+
+                        setTimeout(() => { setScanResult(null); setLateInfo(null); setExemptInfo(null); setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingRef.current = false; }, 3000);
+                    }, 300);
+                } catch(err) {
+                    setStatus("เกิดข้อผิดพลาดในการบันทึก");
+                    setTimeout(() => { setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingRef.current = false; }, 2000);
+                }
+            };
+
+            // 👇 ฟังก์ชันตรวจสอบรหัสจากฟอร์มกรอกมือ 👇
+            const handleManualCheck = () => {
+                const code = manualInput.trim();
+                if (!code) return;
+                
+                const studentInfo = studentList.find(s => s.code && String(s.code).trim() === code);
+                if (studentInfo) {
+                    setPreviewStudent(studentInfo);
+                } else {
+                    setPreviewStudent(null);
+                    alert(`ไม่พบข้อมูลนักเรียนรหัส ${code} ในระบบ`);
+                }
+            };
+
+            // 👇 แก้ไขปรับปรุงระบบการเรียกกล้องให้รองรับ Android ทุกรุ่น
+            useEffect(() => {
+                let scanner = null;
+                let isUnmounted = false;
+
+                const initCamera = async () => {
+                    if (isUnmounted) return;
+                    
+                    try {
+                        scanner = new window.Html5Qrcode("reader");
+                        
+                        // ปรับ config ให้กรอบโฟกัส (qrbox) ขยายกว้างเกือบเท่ากรอบกล้อง (95%)
+                        const config = { 
+                            fps: 10, 
+                            qrbox: (viewfinderWidth, viewfinderHeight) => {
+                                const minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
+                                return {
+                                    width: Math.floor(minEdgeSize * 0.95),
+                                    height: Math.floor(minEdgeSize * 0.95)
+                                };
+                            },
+                            aspectRatio: 1.0 // บังคับสัดส่วนวิดีโอให้เป็นสี่เหลี่ยมจัตุรัสเพื่อให้พอดีกับ UI
+                        };
+                        
+                        if (currentGps) {
+                            const dist = getDistanceFromLatLonInM(
+                                currentGps.lat, currentGps.lng,
+                                parseFloat(latestTimeSettings.current.gpsLat), parseFloat(latestTimeSettings.current.gpsLng)
+                            );
+                            if (dist <= 200) {
+                                setStatus("พร้อมสแกนคิวอาร์โค้ด");
+                            } else {
+                                setStatus(`คุณอยู่นอกพื้นที่โรงเรียน (ระยะห่าง ${Math.round(dist)} เมตร)`);
+                            }
+                        } else {
+                            setStatus("พร้อมสแกนคิวอาร์โค้ด");
+                        }
+
+                        try {
+                            // ลองเปิดกล้องหลังก่อน
+                            await scanner.start({ facingMode: "environment" }, config, 
+                                (decodedText) => processScanData(decodedText),
+                                (err) => {}
+                            );
+                        } catch (envError) {
+                            console.warn("ไม่สามารถดึงกล้องหลังได้ กำลังสลับไปใช้กล้องสำรอง...", envError);
+                            if (isUnmounted) return;
+                            
+                            // ระบบสำรอง: หากเปิดกล้องหลังไม่ได้ ให้ดึงกล้องตัวใดก็ได้มาแทน (แก้บัคใน Android หลายรุ่น)
+                            try {
+                                const devices = await window.Html5Qrcode.getCameras();
+                                if (devices && devices.length > 0) {
+                                    await scanner.start(devices[0].id, config, 
+                                        (decodedText) => processScanData(decodedText),
+                                        (err) => {}
+                                    );
+                                } else {
+                                    throw new Error("ไม่พบอุปกรณ์กล้อง");
+                                }
+                            } catch (fallbackError) {
+                                setStatus("ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตสิทธิ์กล้องในเบราว์เซอร์");
+                            }
+                        }
+                    } catch (error) {
+                        console.error("Camera Init Error:", error);
+                        setStatus("เกิดข้อผิดพลาดในการเตรียมกล้อง");
+                    }
+                };
+
+                // ตรวจสอบว่ามีไลบรารีสแกนอยู่หรือไม่ หากไม่มีให้โหลดก่อน
+                if (!window.Html5Qrcode) {
+                    setStatus("กำลังโหลดระบบกล้อง...");
+                    const script = document.createElement('script');
+                    script.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+                    script.async = true;
+                    script.onload = () => {
+                        if (!isUnmounted) initCamera();
+                    };
+                    document.body.appendChild(script);
+                } else {
+                    initCamera();
+                }
+
+                return () => { 
+                    isUnmounted = true;
+                    if (scanner) {
+                        try {
+                            scanner.stop().then(() => scanner.clear()).catch(e => console.log(e));
+                        } catch(e) {}
+                    }
+                };
             }, []);
+            // 👆 สิ้นสุดการแก้ไขระบบเรียกกล้อง
 
             return (
                 <div className="fixed inset-0 z-50 bg-gray-900 flex flex-col overflow-hidden h-full w-full">
@@ -613,11 +782,48 @@
                         <div className="text-gray-300 mt-1">{dateStr} | {modeName}</div>
                     </div>
                     
-                    <div className="flex-1 flex flex-col items-center justify-center relative p-4">
+                    <div className="flex-1 flex flex-col items-center justify-center relative p-4 overflow-y-auto">
+                        {/* กรอบแสดงภาพจากกล้อง */}
                         <div id="reader" className="w-full max-w-md bg-black rounded-2xl overflow-hidden border-4 border-ns-blue shadow-2xl flex items-center justify-center"></div>
-                        <div className="mt-6 px-6 py-2 bg-black/70 text-white rounded-full backdrop-blur-sm shadow-md animate-pulse z-20">
+                        <div className="mt-4 px-6 py-2 bg-black/70 text-white rounded-full backdrop-blur-sm shadow-md animate-pulse z-20 mb-4">
                             <i className="fa-solid fa-location-dot mr-2 text-red-400"></i> {status}
                         </div>
+
+                        {/* 👇 ฟอร์มกรอกรหัสด้วยมือ (กรณีสแกนไม่ติด) 👇 */}
+                        <div className="w-full max-w-md bg-gray-800/90 backdrop-blur-md p-4 rounded-xl border border-gray-600 shadow-xl z-20">
+                            <h3 className="text-ns-yellow font-bold mb-2 text-sm"><i className="fa-solid fa-keyboard mr-2"></i>กรอกรหัสประจำตัว (กรณีไม่สแกน QR)</h3>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="text" 
+                                    value={manualInput} 
+                                    onChange={e => {
+                                        setManualInput(e.target.value);
+                                        setPreviewStudent(null);
+                                    }}
+                                    onKeyDown={e => e.key === 'Enter' && handleManualCheck()}
+                                    placeholder="ระบุรหัสประจำตัว..." 
+                                    className="flex-1 px-3 py-2 rounded-lg bg-gray-700 text-white border border-gray-500 focus:border-ns-yellow outline-none font-mono"
+                                />
+                                <button onClick={handleManualCheck} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold transition shadow">ตรวจสอบ</button>
+                            </div>
+                            
+                            {previewStudent && (
+                                <div className="mt-3 p-3 bg-white rounded-lg border-l-4 border-ns-blue flex justify-between items-center animate-[fadeIn_0.2s_ease-out]">
+                                    <div className="text-left">
+                                        <p className="text-ns-blue font-bold text-lg">{previewStudent.name}</p>
+                                        <p className="text-gray-600 text-xs mt-1">รหัส: <span className="font-bold text-gray-800">{previewStudent.code}</span> | ชั้น: <span className="font-bold text-gray-800">{previewStudent.classLevel}/{previewStudent.room}</span></p>
+                                    </div>
+                                    <button onClick={() => {
+                                        processScanData(previewStudent.code);
+                                        setManualInput('');
+                                        setPreviewStudent(null);
+                                    }} className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold shadow-md transition ml-2 whitespace-nowrap">
+                                        ยืนยันบันทึก
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                        {/* 👆 --------------------------------- 👆 */}
                     </div>
                     
                     {scanResult && (
@@ -695,6 +901,7 @@
             const [selectedStudentForManual, setSelectedStudentForManual] = useState(null);
             const [showConfirmManual, setShowConfirmManual] = useState(false);
             const [isProcessingManual, setIsProcessingManual] = useState(false);
+            const [duplicateError, setDuplicateError] = useState(null);
 
             const uniqueClasses = [...new Set(studentList.map(s => s.classLevel).filter(Boolean))].sort();
             const uniqueRooms = [...new Set(studentList.filter(s => s.classLevel === selectedClass).map(s => s.room).filter(Boolean))].sort((a,b) => Number(a) - Number(b));
@@ -821,9 +1028,7 @@
                 if(!selectedStudentForManual) return;
                 
                 const studentToSave = selectedStudentForManual;
-                setShowConfirmManual(false);
-                setSelectedStudentForManual(null);
-                setIsProcessingManual(false);
+                setIsProcessingManual(true);
 
                 const scanNow = new Date();
                 const scanTimeStr = `${String(scanNow.getHours()).padStart(2, '0')}:${String(scanNow.getMinutes()).padStart(2, '0')}`;
@@ -851,9 +1056,17 @@
                 // 👆 ------------------------------------------------------------- 👆
 
                 if (isDuplicate) {
-                    setTimeout(() => alert(`นักเรียนถูกบันทึกเวลาเข้า/ออกในรอบนี้ไปแล้ว`), 300);
+                    setShowConfirmManual(false);
+                    setSelectedStudentForManual(null);
+                    setIsProcessingManual(false);
+                    setDuplicateError(`คุณได้บันทึกเวลา${currentType}แล้วก่อนหน้านี้\n(${studentToSave.name})`);
+                    setTimeout(() => { setDuplicateError(null); }, 3000);
                     return;
                 }
+
+                setShowConfirmManual(false);
+                setSelectedStudentForManual(null);
+                setIsProcessingManual(false);
 
                 const newTimeRecord = {
                     id: Date.now(),
@@ -878,14 +1091,107 @@
                 };
 
                 try {
+                    // 1. บันทึกเวลาลงจอและฐานข้อมูล
                     setRecords(prev => [newTimeRecord, ...prev]);
-                    callGAS('saveTime', newTimeRecord).catch(e => console.log(e));
+                    await callGAS('saveTime', newTimeRecord); // ใช้ await ป้องกัน GAS Lock
 
+                    // 2. บันทึกประวัติลืมบัตร
                     if (setForgotCardRecords) {
                         setForgotCardRecords(prev => [newForgotCardRecord, ...(prev || [])]);
                     }
-                    callGAS('saveForgotCardRecord', { ...newForgotCardRecord, targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48' }).catch(e => console.log(e));
+                    await callGAS('saveForgotCardRecord', { ...newForgotCardRecord, targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48' });
 
+                    let hasDeductedForgotCard = false;
+
+                    // --- 3. จัดการหักคะแนนพฤติกรรมอัตโนมัติ กรณีลืมบัตร ---
+                    try {
+                        // ดึงเกณฑ์พฤติกรรมทั้งหมดที่มีคำว่า "ลืมบัตร" และเป็นประเภท "ลบ"
+                        const allForgotBehaviors = (behaviorsSetting || []).filter(b => String(b.name || '').includes('ลืมบัตร') && b.type === 'ลบ');
+                        
+                        let forgotBehavior = null;
+                        let shouldDeduct = false;
+
+                        if (allForgotBehaviors.length > 0) {
+                            // 1. หาแบบเป๊ะๆ ก่อน เช่น "ครั้งที่ 4"
+                            const exactMatchStr = `ครั้งที่ ${forgotCardCount}`;
+                            forgotBehavior = allForgotBehaviors.find(b => String(b.name || '').includes(exactMatchStr));
+                            
+                            if (forgotBehavior) {
+                                shouldDeduct = true;
+                            } else {
+                                // 2. ระบบค้นหาอัจฉริยะแบบ "เกิน X ครั้ง" (ดึงตัวเลข X ออกมาคำนวณ)
+                                let bestOverMatch = null;
+                                let maxOverX = -1;
+                                
+                                allForgotBehaviors.forEach(b => {
+                                    const name = String(b.name || '');
+                                    const match = name.match(/เกิน\s*(\d+)\s*ครั้ง/); // ค้นหาตัวเลขหลังคำว่า "เกิน"
+                                    if (match) {
+                                        const x = parseInt(match[1], 10);
+                                        // ถ้านับครั้งที่ลืม > X และ X มากที่สุดที่เจอ (กรณีมีการตั้งไว้หลายอัน)
+                                        if (forgotCardCount > x && x > maxOverX) {
+                                            maxOverX = x;
+                                            bestOverMatch = b;
+                                        }
+                                    }
+                                });
+
+                                if (bestOverMatch) {
+                                    forgotBehavior = bestOverMatch;
+                                    shouldDeduct = true;
+                                } else {
+                                    // 3. หาแบบพื้นฐาน (ไม่มีคำว่าครั้งระบุไว้) หักทุกรอบที่หาเกณฑ์แบบเป๊ะๆ ไม่เจอ
+                                    forgotBehavior = allForgotBehaviors.find(b => !String(b.name || '').includes('ครั้ง'));
+                                    if (forgotBehavior) {
+                                        shouldDeduct = true;
+                                    } else {
+                                        // ไม่ตรงกับเกณฑ์ใดๆ เลย (เช่น ตั้งไว้แค่ ครั้งที่ 4 แต่เพิ่งลืมครั้งที่ 1)
+                                        shouldDeduct = false;
+                                    }
+                                }
+                            }
+                        } else {
+                            // ไม่มีตั้งค่าเลย ให้ใช้ค่าตั้งต้น
+                            let defaultScore = -5;
+                            if (forgotCardCount === 2) defaultScore = -10;
+                            if (forgotCardCount >= 3) defaultScore = -15;
+                            forgotBehavior = { name: 'ลืมบัตรประจำตัวนักเรียน', score: defaultScore, type: 'ลบ' };
+                            shouldDeduct = true;
+                        }
+
+                        if (shouldDeduct && forgotBehavior) {
+                            hasDeductedForgotCard = true;
+                            
+                            // บังคับคะแนนให้เป็นติดลบ 
+                            const deductFScore = -Math.abs(Number(forgotBehavior.score)); 
+                            
+                            let finalFBehaviorName = forgotBehavior.name;
+                            // ถ้าชื่อพฤติกรรมไม่ได้ระบุครั้งไว้ ให้เติมต่อท้ายเพื่อให้รู้ว่าหักจากการลืมครั้งที่เท่าไหร่
+                            if (!finalFBehaviorName.includes('ครั้ง')) {
+                                finalFBehaviorName = `${finalFBehaviorName} (ครั้งที่ ${forgotCardCount})`;
+                            }
+
+                            const newForgotBehaviorRecord = {
+                                id: Date.now() + 3,
+                                date: scanDateStr,
+                                studentId: studentToSave.code,
+                                name: studentToSave.name,
+                                room: `${studentToSave.classLevel}/${studentToSave.room}`,
+                                behaviorName: finalFBehaviorName,
+                                score: deductFScore,
+                                recorder: user ? user.name : 'ระบบอัตโนมัติ (ลืมบัตร)',
+                                type: 'ลบ'
+                            };
+
+                            if (setBehaviorRecords) setBehaviorRecords(prev => [newForgotBehaviorRecord, ...(prev || [])]);
+                            await callGAS('saveBehaviorRecord', { ...newForgotBehaviorRecord, targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48' });
+                        }
+                    } catch (err) {
+                        console.log("Auto behavior (forgot card) error:", err);
+                    }
+                    // ------------------------------------------------
+
+                    // 4. หักคะแนนมาสายอัตโนมัติ
                     if (scanIsLate && currentType === "เข้า" && !isExempted) {
                         const autoScore = schoolConfig && schoolConfig.autoScoreSettings ? schoolConfig.autoScoreSettings : {};
                         if (autoScore.school_late === true) {
@@ -896,13 +1202,14 @@
 
                             let lateBehavior = (behaviorsSetting || []).find(b => b.name.includes('สาย') && b.name.includes(searchKeyword));
                             if (!lateBehavior) {
-                                let defaultScore = -5;
+                                let defaultScore = -5; // ติดลบ
                                 if (lateCount === 2) defaultScore = -10;
                                 if (lateCount === 3) defaultScore = -15;
                                 if (lateCount > 3) defaultScore = -20;
                                 lateBehavior = (behaviorsSetting || []).find(b => b.name.includes('สาย') && !b.name.includes('ครั้ง')) || { name: 'มาโรงเรียนสาย', score: defaultScore, type: 'ลบ' };
                             }
 
+                            // สำคัญ: บังคับคะแนนให้เป็นติดลบ
                             const deductScore = -Math.abs(Number(lateBehavior.score));
                             const finalBehaviorName = lateBehavior.name.includes(searchKeyword) ? lateBehavior.name : `${lateBehavior.name} (${searchKeyword})`;
 
@@ -918,14 +1225,38 @@
                                 type: 'ลบ'
                             };
 
-                            callGAS('saveBehaviorRecord', { ...newBehaviorRecord, targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48' }).catch(e => console.log(e));
                             if (setBehaviorRecords) setBehaviorRecords(prev => [newBehaviorRecord, ...(prev || [])]);
+                            await callGAS('saveBehaviorRecord', { ...newBehaviorRecord, targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48' });
                         }
+
+                        // --- เพิ่มระบบอัปเดตคาบ 0 เป็น "สาย" อัตโนมัติ (กรณีลืมบัตร) ---
+                        const classLevelNum = String(studentToSave.classLevel).replace(/[^0-9]/g, '');
+                        const hrSubCode = `HR00${classLevelNum}`;
+                        const autoAttPayload = {
+                            targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48',
+                            date: scanDateStr,
+                            period: '0',
+                            subjectCode: hrSubCode,
+                            subjectName: 'กิจกรรมหน้าเสาธง/โฮมรูม',
+                            room: `${studentToSave.classLevel}/${studentToSave.room}`,
+                            teacherName: 'ระบบอัตโนมัติ',
+                            records: [{ studentId: studentToSave.code, studentName: studentToSave.name, status: 'สาย', isChanged: true }]
+                        };
+                        callGAS('saveAttendanceBatch', { 
+                            attendance: [autoAttPayload], behaviorsToAdd: [], behaviorsToDelete: [], leavesToAdd: [], leavesToEdit: [], leavesToDelete: [] 
+                        }).catch(e => console.log("Auto attendance error:", e));
+                        // ------------------------------------------------
                     }
 
                     setTimeout(() => {
                         let msg = `บันทึกเวลาเข้า-ออก และประวัติลืมบัตรสำเร็จ!\n(${studentToSave.name})`;
                         if (isExempted) msg += `\n\n* ได้รับการยกเว้นมาสาย: ${studentExemption.reason}`;
+                        
+                        if (hasDeductedForgotCard) {
+                            msg += `\n* หักคะแนนพฤติกรรมลืมบัตรอัตโนมัติ (ครั้งที่ ${forgotCardCount})`;
+                        } else {
+                            msg += `\n* บันทึกประวัติลืมบัตรครั้งที่ ${forgotCardCount} (ยังไม่ถึงเกณฑ์หักคะแนน)`;
+                        }
                         alert(msg);
                     }, 300);
                 } catch(e) {
@@ -973,8 +1304,32 @@
                                                 const id = e.target.value;
                                                 const found = studentList.find(s => String(s.id) === String(id));
                                                 if(found) {
-                                                    setSelectedStudentForManual(found);
-                                                    setShowConfirmManual(true);
+                                                    // --- เพิ่มระบบตรวจสอบข้อมูลซ้ำทันทีที่เลือกชื่อ ---
+                                                    const scanNow = new Date();
+                                                    const scanTimeStr = `${String(scanNow.getHours()).padStart(2, '0')}:${String(scanNow.getMinutes()).padStart(2, '0')}`;
+                                                    const scanDateStr = `${String(scanNow.getDate()).padStart(2, '0')}/${String(scanNow.getMonth() + 1).padStart(2, '0')}/${scanNow.getFullYear() + 543}`;
+                                                    
+                                                    const { isOutMode } = determineModeAndLate(scanTimeStr, timeSettings.startIn, timeSettings.lateTime, timeSettings.startOut);
+                                                    const currentType = isOutMode ? "ออก" : "เข้า";
+
+                                                    // ตรวจสอบว่าเคยบันทึกประเภทนี้ในวันนี้หรือยัง
+                                                    const isDuplicate = records.some(r => 
+                                                        String(r.studentId).trim() === String(found.code).trim() && 
+                                                        formatDisplayDate(r.date) === scanDateStr && 
+                                                        r.type === currentType
+                                                    );
+
+                                                    if (isDuplicate) {
+                                                        // ถ้าซ้ำ ให้โชว์แจ้งเตือนสีแดงทันที (ไม่ต้องโชว์ป๊อปอัปยืนยันลืมบัตร)
+                                                        setDuplicateError(`คุณได้บันทึกเวลา${currentType}แล้วก่อนหน้านี้\n(${found.name})`);
+                                                        setTimeout(() => { setDuplicateError(null); }, 3000);
+                                                    } else {
+                                                        // ถ้ายังไม่ซ้ำ ถึงจะค่อยโชว์ป๊อปอัปยืนยัน
+                                                        setSelectedStudentForManual(found);
+                                                        setShowConfirmManual(true);
+                                                    }
+                                                    
+                                                    // เคลียร์ค่ากลับเป็นค่าเริ่มต้น เพื่อให้สามารถคลิกเลือกคนเดิมซ้ำได้ในกรณีที่ลบประวัติแล้วเลือกใหม่
                                                     e.target.value = "";
                                                 }
                                             }} className="w-full border-2 border-ns-blue rounded-lg p-2 bg-white focus:ring-2 focus:ring-ns-blue outline-none font-bold" disabled={!selectedRoom}>
@@ -1003,12 +1358,15 @@
                                         <th className="p-3 border text-center">ชั้น/ห้อง</th>
                                         <th className="p-3 border text-center">เวลา</th>
                                         <th className="p-3 border text-center">สถานะ</th>
-                                        <th className="p-3 border text-center w-28">จัดการ</th>
+                                        {/* จำกัดสิทธิ์การมองเห็นหัวตาราง 'จัดการ' */}
+                                        {(user && (user.role === 'admin' || user.role === 'administrative')) && (
+                                            <th className="p-3 border text-center w-28">จัดการ</th>
+                                        )}
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {records.length === 0 ? (
-                                        <tr><td colSpan="7" className="text-center p-6 text-gray-400">ยังไม่มีข้อมูลการสแกนในวันนี้</td></tr>
+                                        <tr><td colSpan={(user && (user.role === 'admin' || user.role === 'administrative')) ? "7" : "6"} className="text-center p-6 text-gray-400">ยังไม่มีข้อมูลการสแกนในวันนี้</td></tr>
                                     ) : (
                                         records.map(r => (
                                             <tr key={r.id} className="border-b hover:bg-gray-50">
@@ -1020,10 +1378,13 @@
                                                 <td className="p-2 border text-center">
                                                     <span className={`px-2 py-1 rounded text-xs text-white ${r.statusStr === 'สาย' ? 'bg-red-500' : 'bg-green-500'}`}>{r.statusStr}</span>
                                                 </td>
-                                                <td className="p-2 border text-center space-x-2">
-                                                    <button onClick={() => setEditingRecord({...r, date: formatDisplayDate(r.date), time: formatDisplayTime(r.time)})} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-1.5 rounded"><i className="fa-solid fa-edit"></i></button>
-                                                    <button onClick={() => handleDelete(r.id)} className="text-red-500 hover:text-red-700 bg-red-50 p-1.5 rounded"><i className="fa-solid fa-trash"></i></button>
-                                                </td>
+                                                {/* จำกัดสิทธิ์การมองเห็นปุ่ม แก้ไข/ลบ */}
+                                                {(user && (user.role === 'admin' || user.role === 'administrative')) && (
+                                                    <td className="p-2 border text-center space-x-2">
+                                                        <button onClick={() => setEditingRecord({...r, date: formatDisplayDate(r.date), time: formatDisplayTime(r.time)})} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-1.5 rounded"><i className="fa-solid fa-edit"></i></button>
+                                                        <button onClick={() => handleDelete(r.id)} className="text-red-500 hover:text-red-700 bg-red-50 p-1.5 rounded"><i className="fa-solid fa-trash"></i></button>
+                                                    </td>
+                                                )}
                                             </tr>
                                         ))
                                     )}
@@ -1099,6 +1460,17 @@
                     )}
 
                     {showScanner && <ScannerPopup onClose={() => setShowScanner(false)} timeSettings={timeSettings} onRecordSaved={handleRecordSaved} records={records} currentGps={currentGps} studentList={studentList} schoolConfig={schoolConfig} behaviorsSetting={behaviorsSetting} behaviorRecords={behaviorRecords} setBehaviorRecords={setBehaviorRecords} user={user} exemptions={exemptions} />}
+                    
+                    {duplicateError && (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 transition-opacity">
+                            <div className="bg-white border-b-8 border-red-500 w-full max-w-sm p-6 rounded-2xl shadow-2xl animate-[bounce_0.5s_ease-in-out]">
+                                <div className="flex flex-col items-center text-red-500 mb-2">
+                                    <i className="fa-solid fa-triangle-exclamation text-6xl mb-4 drop-shadow-md"></i>
+                                    <h3 className="text-xl font-extrabold text-red-600 text-center leading-relaxed whitespace-pre-line">{duplicateError}</h3>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         };
@@ -1139,7 +1511,17 @@
     const uniqueClasses = [...new Set((students || []).map(s => s.classLevel).filter(Boolean))].sort();
     const uniqueRooms = [...new Set((students || []).filter(s => s.classLevel === selectedClass).map(s => s.room).filter(Boolean))].sort((a,b) => Number(a) - Number(b));
     const classStudents = (students || []).filter(s => s.classLevel === selectedClass && s.room === selectedRoom);
-    const availableBehaviors = (behaviorsSetting || []).filter(b => b.type === activeMode);
+    
+    // 👇 แก้ไข: เพิ่มการกรองรายการพฤติกรรมตามสิทธิบทบาท (Role) ของผู้ใช้งาน 👇
+    const availableBehaviors = (behaviorsSetting || []).filter(b => {
+        if (b.type !== activeMode) return false;
+        if (user && user.role === 'admin') return true; // แอดมินสามารถเห็นและบันทึกได้ทุกรายการ
+        const bRole = b.role || 'all';
+        if (bRole === 'all') return true; // รายการที่ตั้งค่าเป็น "ทุกคน" ให้มองเห็นได้
+        if (user && bRole === user.role) return true; // รายการที่ตั้งค่าไว้ตรงกับบทบาทของผู้ใช้
+        return false;
+    });
+    // 👆 ------------------------------------------------------------- 👆
 
     const filterUniqueRooms = [...new Set((students || []).filter(s => s.classLevel === filterClass).map(s => s.room).filter(Boolean))].sort((a,b) => Number(a) - Number(b));
 
@@ -4905,6 +5287,7 @@
                                     <option value="dept_admin">แอดมินกลุ่มสาระ</option>
                                     <option value="executive">ผู้บริหาร</option>
                                     <option value="admin">ผู้ดูแลระบบ (Admin)</option>
+                                    <option value="administrative">ครูฝ่ายปกครอง (dministrative)</option>
                                 </select>
                             </div>
                             <div><label className="block text-sm text-gray-600 mb-1">Username (สำหรับล็อกอิน)</label><input type="text" name="username" value={formData.username} onChange={handleChange} className="w-full border rounded p-2 focus:ring focus:ring-ns-blue bg-blue-50" required /></div>
@@ -4946,7 +5329,21 @@
                                         <tr key={u.id} className="hover:bg-gray-50">
                                             <td className="p-3 font-bold text-ns-blue">{u.name}</td>
                                             <td className="p-3">{u.position}</td>
-                                            <td className="p-3 text-center"><span className={`px-2 py-1 rounded text-xs text-white ${u.role === 'admin' ? 'bg-purple-500' : u.role === 'executive' ? 'bg-teal-500' : u.role === 'dept_admin' ? 'bg-fuchsia-500' : 'bg-blue-500'}`}>{u.role === 'dept_admin' ? 'แอดมินกลุ่มสาระ' : u.role === 'executive' ? 'ผู้บริหาร' : u.role === 'admin' ? 'แอดมิน' : u.role}</span></td>
+                                            <td className="p-3 text-center">
+                                                <span className={`px-2 py-1 rounded text-xs text-white ${
+                                                    u.role === 'admin' ? 'bg-purple-500' : 
+                                                    u.role === 'administrative' ? 'bg-orange-500' : 
+                                                    u.role === 'executive' ? 'bg-teal-500' : 
+                                                    u.role === 'dept_admin' ? 'bg-fuchsia-500' : 
+                                                    'bg-blue-500'
+                                                }`}>
+                                                    {u.role === 'dept_admin' ? 'แอดมินกลุ่มสาระ' : 
+                                                     u.role === 'executive' ? 'ผู้บริหาร' : 
+                                                     u.role === 'admin' ? 'แอดมิน' : 
+                                                     u.role === 'administrative' ? 'ครูฝ่ายปกครอง' : 
+                                                     u.role}
+                                                </span>
+                                            </td>
                                             <td className="p-3 text-gray-500">{u.username}</td>
                                             <td className="p-3 text-center space-x-2 w-28">
                                                 <button onClick={() => editUser(u)} className="text-blue-500 hover:text-blue-700 bg-blue-50 p-1.5 rounded"><i className="fas fa-edit"></i></button>
@@ -5772,7 +6169,7 @@
 
             const [selectedTeacher, setSelectedTeacher] = useState('');
             const [selectedSubjectObj, setSelectedSubjectObj] = useState(null);
-            const [selectedRoom, setSelectedRoom] = useState('');
+            const [selectedRooms, setSelectedRooms] = useState([]); // เปลี่ยนจาก String เป็น Array เพื่อรองรับการเลือกหลายห้อง
 
             const [checkedStudents, setCheckedStudents] = useState([]); // นักเรียนฝั่งซ้าย (ติ๊กเลือก)
             const [stagedStudents, setStagedStudents] = useState([]); // นักเรียนฝั่งขวา (เตรียมลงทะเบียน)
@@ -5781,9 +6178,9 @@
             const [isSaving, setIsSaving] = useState(false);
             const [deletingGroup, setDeletingGroup] = useState(null);
 
-            // ดึงรายชื่อกลุ่มสาระทั้งหมดจากข้อมูลครูสำหรับให้แอดมินเลือก (เพิ่มกลุ่มสาระมาตรฐาน)
-            const standardDepts = ['วิทยาศาสตร์และเทคโนโลยี', 'คณิตศาสตร์', 'ภาษาไทย', 'ภาษาต่างประเทศ', 'สังคมศึกษา ศาสนาและวัฒนธรรม', 'การงานอาชีพ', 'สุขศึกษาและพลศึกษา', 'ศิลปะ'];
-            const departments = [...new Set([...standardDepts, ...(teachers || []).map(t => t.department).filter(Boolean)])].sort();
+            // ดึงรายชื่อกลุ่มสาระทั้งหมดจากข้อมูลครูสำหรับให้แอดมินเลือก (เพิ่มกลุ่มสาระมาตรฐาน และใช้ .trim() ป้องกันปัญหาช่องว่าง)
+            const standardDepts = ['วิทยาศาสตร์และเทคโนโลยี', 'คณิตศาสตร์', 'ภาษาไทย', 'ภาษาต่างประเทศ', 'สังคมศึกษา ศาสนาและวัฒนธรรม', 'การงานอาชีพ', 'สุขศึกษาและพลศึกษา', 'ศิลปะ', 'แนะแนว', 'กิจกรรมพัฒนาผู้เรียน'];
+            const departments = [...new Set([...standardDepts, ...(teachers || []).map(t => String(t.department || '').trim()).filter(Boolean)])].sort();
 
             // ย้ายฟังก์ชันตัดคำนำหน้าและอักขระพิเศษมาไว้ด้านนอก เพื่อให้ใช้ร่วมกันได้ทั้งหมด
             const normalizeName = (name) => {
@@ -5897,10 +6294,10 @@
                 fetchAllSchedules();
             }, []);
 
-            // แก้ไข: กรองครูตามบทบาท ถ้าเป็น admin ให้กรองตาม dropdown ที่เลือก (selectedDept)
+            // แก้ไข: กรองครูตามบทบาท ใช้ String().trim() เพื่อป้องกันปัญหาช่องว่างส่วนเกินจากฐานข้อมูล
             const deptTeachers = (user && user.role === 'admin') 
-                ? teachers.filter(t => selectedDept ? t.department === selectedDept : true)
-                : teachers.filter(t => t.department === myDepartment);
+                ? teachers.filter(t => selectedDept ? String(t.department || '').trim() === String(selectedDept).trim() : true)
+                : teachers.filter(t => String(t.department || '').trim() === String(myDepartment).trim());
             
             // แก้ไข: กรองตารางสอนของครูที่เลือก โดยใช้ normalizeName เพื่อให้ข้อมูลตรงกันแม้มีคำนำหน้าหรือช่องว่าง
             const targetCleanTeacher = normalizeName(selectedTeacher);
@@ -5912,17 +6309,51 @@
             
             const uniqueSubjects = [];
             const subSet = new Set();
+            // อัปเดตรายการคีย์เวิร์ดที่ต้องการซ่อนตามที่ผู้ใช้ระบุ
+            const excludedSubjectKeywords = [
+                'ชุมนุม', 'จริยธรรม', 'ลูกเสือ', 'ยุวกาชาด', 'การเรียนรู้อิสระ', 
+                'ประกลุ่มสาระ', 'ประชุมกลุ่มสาระ', 'ประชุมฝ่ายบริหารวิชาการ', 
+                'ประชุมบริหารบุคคล', 'ประชุมฝ่ายปกครอง', 'ชุมชุน', 'ประชุมฝ่ายบริหาร'
+            ];
+
             teacherSchedules.forEach(s => {
+                // กรองวิชาที่ไม่อยากให้แสดงตามคีย์เวิร์ด
+                if (excludedSubjectKeywords.some(ex => (s.subjectName || '').includes(ex))) return;
+                
+                // กรองวิชาที่ไม่มีรหัสวิชาออก (เช่น ค่าว่าง หรือ '-')
+                if (!s.subjectCode || String(s.subjectCode).trim() === '' || String(s.subjectCode).trim() === '-') return;
+
                 const k = `${s.subjectCode}_${s.subjectName}`;
-                // แก้ไข: อนุญาตให้แสดงวิชาที่ไม่มีรหัสวิชาได้ (ขอแค่มีชื่อวิชาก็พอ)
+                
                 if (!subSet.has(k) && s.subjectName) {
-                    subSet.add(k);
-                    uniqueSubjects.push({ code: s.subjectCode, name: s.subjectName });
+                    
+                    // หาว่าวิชานี้มีห้องอะไรบ้างที่ครูคนนี้สอน
+                    const roomsForThisSubject = teacherSchedules
+                        .filter(ts => ts.subjectCode === s.subjectCode && ts.subjectName === s.subjectName)
+                        .map(ts => ts.room);
+                    const uniqueRoomsForThisSubject = [...new Set(roomsForThisSubject)];
+                    
+                    // เช็คว่ามีห้องไหนที่ "ยังไม่ได้ลงทะเบียน" อยู่บ้าง
+                    const unregisteredRooms = uniqueRoomsForThisSubject.filter(room => {
+                        return !(records || []).some(r => {
+                            const recordRooms = String(r.room || '').split(',').map(x => x.trim());
+                            return r.subjectCode === s.subjectCode && recordRooms.includes(room) && r.teacherName === selectedTeacher;
+                        });
+                    });
+
+                    const isCurrentlyEditingThis = isEditing && selectedSubjectObj && selectedSubjectObj.code === s.subjectCode;
+                    
+                    // จะเพิ่มวิชานี้ใน Dropdown ก็ต่อเมื่อยังมีห้องเหลือให้ลงทะเบียน หรือกำลังอยู่ในโหมดแก้ไขวิชานี้
+                    if (unregisteredRooms.length > 0 || isCurrentlyEditingThis) {
+                        subSet.add(k);
+                        uniqueSubjects.push({ code: s.subjectCode, name: s.subjectName });
+                    }
                 }
             });
 
             const uniqueRooms = [];
-            if (selectedSubjectObj) {
+            let availableUniqueRooms = [];
+            if (selectedSubjectObj && selectedTeacher) {
                 const roomSet = new Set();
                 teacherSchedules.filter(s => s.subjectCode === selectedSubjectObj.code && s.subjectName === selectedSubjectObj.name).forEach(s => {
                     if (s.room && !roomSet.has(s.room)) {
@@ -5930,14 +6361,119 @@
                         uniqueRooms.push(s.room);
                     }
                 });
+                
+                // กรองเฉพาะห้องที่ยังไม่ได้ลงทะเบียน หรือเป็นห้องที่กำลังแก้ไขอยู่
+                availableUniqueRooms = uniqueRooms.filter(room => {
+                    const isRegistered = (records || []).some(r => {
+                        const recordRooms = String(r.room || '').split(',').map(x => x.trim());
+                        return r.subjectCode === selectedSubjectObj.code && 
+                               recordRooms.includes(room) && 
+                               r.teacherName === selectedTeacher;
+                    });
+                    
+                    // หากกำลังแก้ไขข้อมูลห้องนี้อยู่ ให้แสดงห้องนี้ในตัวเลือกด้วย
+                    if (isEditing && selectedRooms.includes(room)) {
+                        return true;
+                    }
+                    
+                    return !isRegistered;
+                });
+                
+                // เรียงลำดับชั้น/ห้องจากน้อยไปมาก (Natural Sort รองรับหลักสิบเช่น ม.1/10)
+                availableUniqueRooms.sort((a, b) => String(a).localeCompare(String(b), 'th', { numeric: true }));
             }
 
-            let classStudents = [];
-            if (selectedRoom) {
-                const parts = selectedRoom.split('/');
-                if (parts.length === 2) {
-                    classStudents = students.filter(s => s.classLevel === parts[0].trim() && s.room === parts[1].trim()).sort((a,b) => Number(a.code) - Number(b.code));
+            // ฟังก์ชันจัดการการติ๊กเลือกห้อง
+            const toggleRoomSelection = (room) => {
+                let newSelectedRooms = [...selectedRooms];
+                if (newSelectedRooms.includes(room)) {
+                    newSelectedRooms = newSelectedRooms.filter(r => r !== room);
+                } else {
+                    newSelectedRooms.push(room);
                 }
+                
+                setSelectedRooms(newSelectedRooms);
+                setCheckedStudents([]);
+                
+                // โหลดนักเรียนจากห้องที่เลือกทั้งหมด
+                if (newSelectedRooms.length > 0 && selectedSubjectObj && selectedTeacher) {
+                    let allRegisteredStudents = [];
+                    let hasExisting = false;
+                    
+                    newSelectedRooms.forEach(r => {
+                         const existingRegs = records.filter(rec => {
+                            const recRooms = String(rec.room || '').split(',').map(x => x.trim());
+                            return rec.subjectCode === selectedSubjectObj.code && 
+                                   recRooms.includes(r) && 
+                                   rec.teacherName === selectedTeacher;
+                        });
+                        if(existingRegs.length > 0) {
+                            hasExisting = true;
+                            existingRegs.forEach(rec => {
+                                allRegisteredStudents.push({ code: rec.studentId, name: rec.studentName });
+                            });
+                        }
+                    });
+                    
+                    if (hasExisting && newSelectedRooms.length === 1) {
+                         // ถ้าระบบเจอรายชื่อ ให้โหลดเข้าฝั่งขวา (stagedStudents) ทันที (รองรับกรณีเลือกแค่ 1 ห้องแล้วเจอประวัติ)
+                         const uniqueRegs = Array.from(new Map(allRegisteredStudents.map(item => [item.code, item])).values());
+                         setStagedStudents(uniqueRegs.sort((a,b) => Number(a.code) - Number(b.code)));
+                         setIsEditing(true); // ปรับปุ่มเป็น "ยืนยันแก้ไข" อัตโนมัติ
+                    } else {
+                         setStagedStudents([]);
+                         setIsEditing(false);
+                    }
+                } else {
+                    setStagedStudents([]);
+                    setIsEditing(false);
+                }
+            };
+
+            let classStudents = [];
+            if (selectedRooms.length > 0) {
+                // รวบรวมนักเรียนจากทุกห้องที่เลือก
+                selectedRooms.forEach(roomStr => {
+                    // แตกกรณีที่ตารางสอนใส่ชื่อห้องมาแบบมีลูกน้ำด้วย เช่น "ม.4/8, ม.4/9"
+                    const subRooms = String(roomStr).split(',').map(r => r.trim()).filter(Boolean);
+                    
+                    subRooms.forEach(room => {
+                        // ฟังก์ชันผู้ช่วยสกัดเฉพาะตัวเลข (เช่น "ม.4" -> "4", "08" -> "8")
+                        const cleanNum = (str) => {
+                            const num = String(str || '').replace(/\D/g, '');
+                            return num ? parseInt(num, 10).toString() : '';
+                        };
+
+                        const parts = room.split('/');
+                        if (parts.length >= 2) {
+                            // ดึงเฉพาะตัวเลขของชั้นและห้องมาเทียบกัน ป้องกันปัญหาพิมพ์ไม่เหมือนกัน
+                            const cLevelNum = cleanNum(parts[0]);
+                            const cRoomNum = cleanNum(parts[1]);
+
+                            const roomStudents = students.filter(s => {
+                                const sLevelNum = cleanNum(s.classLevel);
+                                const sRoomNum = cleanNum(s.room);
+                                
+                                return cLevelNum && cRoomNum && sLevelNum === cLevelNum && sRoomNum === cRoomNum;
+                            });
+                            
+                            classStudents = [...classStudents, ...roomStudents];
+                        } else if (room.length > 0 && !room.includes('/')) {
+                            // รองรับกรณีตารางสอนเหมาทั้งระดับชั้น เช่น ใส่แค่ "ม.4" 
+                            const cLevelNum = cleanNum(room);
+                            
+                            const roomStudents = students.filter(s => {
+                                const sLevelNum = cleanNum(s.classLevel);
+                                return cLevelNum && sLevelNum === cLevelNum;
+                            });
+                            classStudents = [...classStudents, ...roomStudents];
+                        }
+                    });
+                });
+                
+                // กำจัดรายชื่อนักเรียนที่ซ้ำซ้อน
+                classStudents = Array.from(new Map(classStudents.map(item => [item.code, item])).values());
+                classStudents.sort((a,b) => Number(a.code) - Number(b.code));
             }
 
             // กรองนักเรียนฝั่งซ้าย (เอาเฉพาะคนที่ยังไม่ได้ไปอยู่ฝั่งขวา)
@@ -5970,26 +6506,35 @@
             };
 
             const handleSave = async () => {
-                if (!selectedTeacher || !selectedSubjectObj || !selectedRoom || stagedStudents.length === 0) return;
+                if (!selectedTeacher || !selectedSubjectObj || selectedRooms.length === 0 || stagedStudents.length === 0) return;
                 setIsSaving(true);
                 try {
+                    // สร้าง String ชื่อห้องรวมกัน เช่น ม.1/1, ม.1/2
+                    const combinedRoomsStr = selectedRooms.join(', ');
+                    
                     const payload = {
                         subjectCode: selectedSubjectObj.code,
                         subjectName: selectedSubjectObj.name,
-                        room: selectedRoom,
+                        room: combinedRoomsStr,
                         teacherName: selectedTeacher,
                         students: stagedStudents.map(c => ({ studentId: c.code, studentName: c.name }))
                     };
                     
                     const res = await callGAS('saveRegistration', payload);
                     
-                    let newRecords = records.filter(r => !(r.subjectCode === payload.subjectCode && r.room === payload.room && r.teacherName === payload.teacherName));
+                    // ลบ record เก่าที่ตรงกับวิชา ครู และห้องที่กำลังบันทึก (เพื่อลงทับ)
+                    let newRecords = [...records];
+                    selectedRooms.forEach(r => {
+                         newRecords = newRecords.filter(rec => !(rec.subjectCode === payload.subjectCode && String(rec.room||'').split(',').map(x=>x.trim()).includes(r) && rec.teacherName === payload.teacherName));
+                    });
+                    // ลบแบบรวมห้องด้วย เผื่อมี
+                    newRecords = newRecords.filter(rec => !(rec.subjectCode === payload.subjectCode && rec.room === combinedRoomsStr && rec.teacherName === payload.teacherName));
                     
                     const newAdds = payload.students.map(stu => ({
                         id: Date.now() + Math.random(),
                         subjectCode: payload.subjectCode,
                         subjectName: payload.subjectName,
-                        room: payload.room,
+                        room: combinedRoomsStr, // บันทึกเป็นชื่อห้องรวม
                         studentId: stu.studentId,
                         studentName: stu.studentName,
                         teacherName: payload.teacherName
@@ -6001,7 +6546,7 @@
                     setIsEditing(false);
                     setStagedStudents([]);
                     setCheckedStudents([]);
-                    setSelectedRoom('');
+                    setSelectedRooms([]);
                 } catch(e) {
                     alert('บันทึกล้มเหลว: ' + e.message);
                 }
@@ -6021,11 +6566,11 @@
                     
                     setRecords(records.filter(r => !(r.subjectCode === payload.subjectCode && r.room === payload.room && r.teacherName === payload.teacherName)));
                     
-                    if (isEditing && selectedSubjectObj && selectedSubjectObj.code === payload.subjectCode && selectedRoom === payload.room && selectedTeacher === payload.teacherName) {
+                    if (isEditing && selectedSubjectObj && selectedSubjectObj.code === payload.subjectCode && selectedRooms.join(', ') === payload.room && selectedTeacher === payload.teacherName) {
                         setIsEditing(false);
                         setStagedStudents([]);
                         setCheckedStudents([]);
-                        setSelectedRoom('');
+                        setSelectedRooms([]);
                     }
                     setDeletingGroup(null);
                 } catch(e) {
@@ -6037,23 +6582,25 @@
             const handleEditGroup = (grp) => {
                 setSelectedTeacher(grp.teacherName);
                 setSelectedSubjectObj({ code: grp.subjectCode, name: grp.subjectName });
-                setSelectedRoom(grp.room);
+                // รองรับกรณีห้องที่มีเครื่องหมายจุลภาค (รวมหลายห้อง)
+                const roomsArr = grp.room.split(',').map(r => r.trim());
+                setSelectedRooms(roomsArr);
                 setStagedStudents(grp.students.map(s => ({ code: s.studentId, name: s.studentName })).sort((a,b) => Number(a.code) - Number(b.code)));
                 setCheckedStudents([]);
                 setIsEditing(true);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             };
 
-            // กรองประวัติการลงทะเบียนตามสิทธิ์และกลุ่มสาระที่เลือก
+            // กรองประวัติการลงทะเบียนตามสิทธิ์และกลุ่มสาระที่เลือก (เพิ่ม .trim() ป้องกันช่องว่าง)
             const displayRecords = (records || []).filter(r => {
                 if (user && user.role === 'admin' && !selectedDept) return true; // แอดมินดูได้ทั้งหมดถ้าไม่ได้เลือกกลุ่มสาระ
                 
                 const targetDept = (user && user.role === 'admin') ? selectedDept : myDepartment;
                 const rTeacherNorm = normalizeName(r.teacherName);
                 const teacherObj = (teachers || []).find(t => normalizeName(t.name) === rTeacherNorm);
-                const recordDept = teacherObj ? teacherObj.department : 'ไม่ระบุกลุ่มสาระ';
+                const recordDept = teacherObj ? String(teacherObj.department || '').trim() : 'ไม่ระบุกลุ่มสาระ';
                 
-                return recordDept === targetDept;
+                return recordDept === String(targetDept || '').trim();
             });
 
             const groupedRecords = [];
@@ -6080,11 +6627,21 @@
                 // 1. ดึงวิชาทั้งหมดที่ต้องสอนจาก allSchedules
                 const requiredClasses = [];
                 const classMap = new Set();
+                // อัปเดตรายการคีย์เวิร์ดที่ต้องการซ่อนให้ตรงกัน
+                const excludedSubjectKeywords = [
+                    'ชุมนุม', 'จริยธรรม', 'ลูกเสือ', 'ยุวกาชาด', 'การเรียนรู้อิสระ', 
+                    'ประกลุ่มสาระ', 'ประชุมกลุ่มสาระ', 'ประชุมฝ่ายบริหารวิชาการ', 
+                    'ประชุมบริหารบุคคล', 'ประชุมฝ่ายปกครอง', 'ชุมชุน', 'ประชุมฝ่ายบริหาร'
+                ];
                 
                 allSchedules.forEach(s => {
                     const tNameNorm = normalizeName(s.teacherName);
-                    // ข้ามถ้าข้อมูลไม่ครบ
-                    if (!s.subjectCode || !s.room || !tNameNorm) return;
+                    
+                    // ข้ามถ้าข้อมูลไม่ครบ หรือ "ไม่มีรหัสวิชา"
+                    if (!s.subjectCode || String(s.subjectCode).trim() === '' || String(s.subjectCode).trim() === '-' || !s.room || !tNameNorm) return;
+                    
+                    // ข้ามวิชาที่ไม่ต้องการแสดงตามคีย์เวิร์ด
+                    if (excludedSubjectKeywords.some(ex => (s.subjectName || '').includes(ex))) return;
                     
                     const key = `${s.subjectCode}_${s.room}_${tNameNorm}`;
                     if (!classMap.has(key)) {
@@ -6108,7 +6665,11 @@
                 // 2. ดึงวิชาที่ลงทะเบียนไปแล้ว
                 const registeredMap = new Set();
                 (records || []).forEach(r => {
-                    registeredMap.add(`${r.subjectCode}_${r.room}_${normalizeName(r.teacherName)}`);
+                    // ประยุกต์ให้รองรับชื่อห้องแบบรวบกัน เช่น "ม.1/1, ม.1/2"
+                    const rRooms = String(r.room || '').split(',').map(x => x.trim());
+                    rRooms.forEach(splitRoom => {
+                         registeredMap.add(`${r.subjectCode}_${splitRoom}_${normalizeName(r.teacherName)}`);
+                    });
                 });
 
                 // 3. หาวิชาที่ยังไม่ลงทะเบียน (เทียบความแตกต่าง)
@@ -6276,7 +6837,7 @@
                                         <label className="block text-sm font-bold text-fuchsia-700 mb-2">เลือกกลุ่มสาระ</label>
                                         <select 
                                             value={selectedDept} 
-                                            onChange={e => { setSelectedDept(e.target.value); setSelectedTeacher(''); setSelectedSubjectObj(null); setSelectedRoom(''); setIsEditing(false); setCheckedStudents([]); setStagedStudents([]); }}
+                                            onChange={e => { setSelectedDept(e.target.value); setSelectedTeacher(''); setSelectedSubjectObj(null); setSelectedRooms([]); setIsEditing(false); setCheckedStudents([]); setStagedStudents([]); }}
                                             className="w-full border-2 border-fuchsia-200 rounded-lg p-2 focus:ring-2 focus:ring-fuchsia-500 outline-none bg-white font-bold"
                                         >
                                             <option value="">-- ทุกกลุ่มสาระ --</option>
@@ -6288,7 +6849,7 @@
                                     <label className="block text-sm font-bold text-gray-700 mb-2">1. เลือกครูประจำวิชา</label>
                                     <select 
                                         value={selectedTeacher} 
-                                        onChange={e => { setSelectedTeacher(e.target.value); setSelectedSubjectObj(null); setSelectedRoom(''); setIsEditing(false); setCheckedStudents([]); setStagedStudents([]); }}
+                                        onChange={e => { setSelectedTeacher(e.target.value); setSelectedSubjectObj(null); setSelectedRooms([]); setIsEditing(false); setCheckedStudents([]); setStagedStudents([]); }}
                                         className="w-full border-2 border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-fuchsia-500 outline-none"
                                     >
                                         <option value="">-- เลือกชื่อครู --</option>
@@ -6305,7 +6866,7 @@
                                                 const parts = val.split('|'); 
                                                 setSelectedSubjectObj({ code: parts[0], name: parts.slice(1).join('|') }); 
                                             } else setSelectedSubjectObj(null); 
-                                            setSelectedRoom(''); 
+                                            setSelectedRooms([]); 
                                             setIsEditing(false); 
                                             setCheckedStudents([]);
                                             setStagedStudents([]);
@@ -6317,53 +6878,37 @@
                                         {uniqueSubjects.map(s => <option key={`${s.code}|${s.name}`} value={`${s.code}|${s.name}`}>{s.code} {s.name}</option>)}
                                     </select>
                                 </div>
+                                
+                                {/* กล่องเลือกห้องแบบ Checkbox แทน Dropdown */}
                                 <div>
                                     <label className="block text-sm font-bold text-gray-700 mb-2">3. เลือกชั้น/ห้อง</label>
-                                    <select 
-                                        value={selectedRoom} 
-                                        onChange={e => { 
-                                            const newRoom = e.target.value;
-                                            setSelectedRoom(newRoom); 
-                                            setCheckedStudents([]); 
-                                            
-                                            // 👇 เช็คประวัติการลงทะเบียนเดิม เมื่อมีการเลือกชั้น/ห้อง
-                                            if (newRoom && selectedSubjectObj && selectedTeacher) {
-                                                const existingRegs = records.filter(r => 
-                                                    r.subjectCode === selectedSubjectObj.code && 
-                                                    r.room === newRoom && 
-                                                    r.teacherName === selectedTeacher
-                                                );
-                                                
-                                                if (existingRegs.length > 0) {
-                                                    // ถ้าระบบเจอรายชื่อ ให้โหลดเข้าฝั่งขวา (stagedStudents) ทันที
-                                                    const registeredStudents = existingRegs.map(r => ({
-                                                        code: r.studentId,
-                                                        name: r.studentName
-                                                    })).sort((a,b) => Number(a.code) - Number(b.code));
-                                                    
-                                                    setStagedStudents(registeredStudents);
-                                                    setIsEditing(true); // ปรับปุ่มเป็น "ยืนยันแก้ไข" อัตโนมัติ
-                                                } else {
-                                                    setStagedStudents([]);
-                                                    setIsEditing(false);
-                                                }
-                                            } else {
-                                                setStagedStudents([]);
-                                                setIsEditing(false);
-                                            }
-                                            // 👆 ----------------------------------------------------------- 👆
-                                        }}
-                                        className="w-full border-2 border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-fuchsia-500 outline-none font-bold text-fuchsia-700"
-                                        disabled={!selectedSubjectObj}
-                                    >
-                                        <option value="">-- เลือกชั้น/ห้อง --</option>
-                                        {uniqueRooms.map(r => <option key={r} value={r}>{r}</option>)}
-                                    </select>
+                                    <div className={`w-full border-2 border-gray-300 rounded-lg p-2 bg-white max-h-32 overflow-y-auto ${!selectedSubjectObj ? 'opacity-50 pointer-events-none' : 'focus-within:border-fuchsia-500 focus-within:ring-1 focus-within:ring-fuchsia-500'}`}>
+                                        {availableUniqueRooms.length > 0 ? (
+                                            <div className="flex flex-col gap-1">
+                                                {availableUniqueRooms.map(r => (
+                                                    <label key={r} className="flex items-center gap-2 cursor-pointer hover:bg-fuchsia-50 p-1 rounded transition">
+                                                        <input 
+                                                            type="checkbox" 
+                                                            value={r}
+                                                            checked={selectedRooms.includes(r)}
+                                                            onChange={() => toggleRoomSelection(r)}
+                                                            className="w-4 h-4 text-fuchsia-600 border-gray-300 rounded focus:ring-fuchsia-500"
+                                                        />
+                                                        <span className="font-bold text-fuchsia-700 text-sm">{r}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-gray-400 text-sm italic py-1">
+                                                {!selectedSubjectObj ? '-- กรุณาเลือกวิชาก่อน --' : 'ไม่มีห้องให้เลือก (ลงครบแล้ว)'}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         )}
 
-                        {selectedRoom && (
+                        {selectedRooms.length > 0 && (
                             <div className="flex flex-col md:flex-row gap-4 h-[500px]">
                                 {/* ฝั่งซ้าย: นักเรียนในห้อง */}
                                 <div className="flex-1 bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
@@ -6374,7 +6919,7 @@
                                                 onChange={toggleAll} 
                                                 disabled={availableStudents.length === 0}
                                             />
-                                            นักเรียนห้อง {selectedRoom} ({availableStudents.length} คน)
+                                            นักเรียน ({availableStudents.length} คน) จากห้อง: {selectedRooms.join(', ')}
                                         </label>
                                     </div>
                                     <div className="flex-1 overflow-y-auto p-2">
@@ -6387,7 +6932,7 @@
                                                 <span className="font-bold text-gray-600 w-16">{s.code}</span>
                                                 <span className="text-gray-800">{s.name}</span>
                                             </label>
-                                        )) : <p className="text-center text-gray-400 p-4 mt-10">นักเรียนทุกคนอยู่ในรายการลงทะเบียนแล้ว</p>}
+                                        )) : <p className="text-center text-gray-400 p-4 mt-10">นักเรียนทุกคนในห้องที่เลือกอยู่ในรายการลงทะเบียนแล้ว</p>}
                                     </div>
                                 </div>
 
@@ -6533,6 +7078,7 @@
             const [reportTeacher, setReportTeacher] = useState('');
             const [reportStatusFilter, setReportStatusFilter] = useState('all');
             const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+            const [reportDataType, setReportDataType] = useState('subject'); // เพิ่ม State สำหรับแยกประเภทรายงาน (รายวิชา / คาบ 0)
 
             useEffect(() => {
                 setReportDate(currentDate);
@@ -6599,6 +7145,95 @@
                         records: [{ studentId: stuCode, studentName: stuName, status: status, isChanged: true }]
                     });
                 });
+
+                // --- Behavior Check for Scanned Record ---
+                const autoScoreSettings = schoolConfig && schoolConfig.autoScoreSettings ? schoolConfig.autoScoreSettings : {};
+                const autoAttLate = autoScoreSettings.att_late === true;
+                
+                if (status === 'สาย' && autoAttLate) {
+                    let lateMinutes = 0;
+                    let isEditingPast = false;
+                    let lateThresholdMinutes = 0; 
+                    let hasLateCriteria = false;
+                    let lateCriteriaKeyword = 'เข้าเรียนสาย';
+
+                    const lateBehaviorSetting = (behaviorsSetting || []).find(b => b.name && b.name.includes('เข้าห้องเรียนสายเกิน'));
+                    if (lateBehaviorSetting) {
+                        hasLateCriteria = true;
+                        lateCriteriaKeyword = lateBehaviorSetting.name.replace(/\s*\(ครั้งที่.*\)/, '').trim(); 
+                        const match = lateCriteriaKeyword.match(/\d+/);
+                        if (match) {
+                            lateThresholdMinutes = parseInt(match[0], 10);
+                        }
+                    }
+
+                    if (activePeriods && activePeriods.length > 0) {
+                        const pSetting = (periodSettings || []).find(p => String(p.period) === String(activePeriods[0]));
+                        if (pSetting && pSetting.start) {
+                            const nowTime = new Date();
+                            const todayStr = `${nowTime.getFullYear()}-${String(nowTime.getMonth()+1).padStart(2,'0')}-${String(nowTime.getDate()).padStart(2,'0')}`;
+                            if (currentDate === todayStr) {
+                                const [startH, startM] = pSetting.start.split(':').map(Number);
+                                const startTimeMinutes = startH * 60 + startM;
+                                const currentTimeMinutes = nowTime.getHours() * 60 + nowTime.getMinutes();
+                                lateMinutes = currentTimeMinutes - startTimeMinutes;
+                                if (lateMinutes < 0) lateMinutes = 0;
+                                if (lateMinutes > 180) isEditingPast = true; 
+                            } else {
+                                isEditingPast = true; 
+                            }
+                        }
+                    }
+                    const lateDynamicPrefix = (lateMinutes > 0 && !isEditingPast) ? `เข้าเรียนสายเกินเวลา ${lateMinutes} นาที` : 'เข้าเรียนสายเกินเวลาที่กำหนด';
+
+                    if (!hasLateCriteria || lateMinutes > lateThresholdMinutes) {
+                        const periodLabel = activePeriods.length > 1 ? `(คาบ ${activePeriods[0]}-${activePeriods[activePeriods.length-1]})` : `(คาบ ${activePeriods[0]})`;
+                        const baseBehaviorNameMatch = `วิชา${activeSubject.subjectName || ''} ${periodLabel}`;
+                        
+                        const isPeriodZero = activePeriods.includes('0') || activePeriods.includes('คาบ 0') || activePeriods.includes('โฮมรูม') || String(activeSubject.subjectCode).startsWith('HR');
+                        
+                        const pastCount = (behaviorRecords || []).filter(r => 
+                            String(r.studentId).trim() === String(stuCode).trim() && 
+                            String(r.behaviorName || '').includes(lateCriteriaKeyword)
+                        ).length + 1;
+                        
+                        let searchKeyword = `ครั้งที่ ${pastCount}`;
+                        if (pastCount > 3) searchKeyword = "เกิน 3 ครั้ง";
+                        
+                        let bSetting = (behaviorsSetting || []).find(b => String(b.name || '').includes(lateCriteriaKeyword) && String(b.name || '').includes(searchKeyword));
+                        if (!bSetting) {
+                            let defaultScores = isPeriodZero ? [-5, -10, -15] : [-3, -5, -10];
+                            let defaultScore = defaultScores[0];
+                            if (pastCount === 2 && defaultScores.length > 1) defaultScore = defaultScores[1];
+                            if (pastCount >= 3 && defaultScores.length > 2) defaultScore = defaultScores[2];
+                            if (pastCount > 3 && defaultScores.length > 3) defaultScore = defaultScores[3];
+                                    
+                            bSetting = (behaviorsSetting || []).find(b => String(b.name || '').includes(lateCriteriaKeyword) && !String(b.name || '').includes('ครั้ง')) || 
+                                       { name: lateCriteriaKeyword, score: defaultScore, type: 'ลบ' };
+                        }
+                        
+                        const deductScore = -Math.abs(Number(bSetting.score));
+                        const finalName = isPeriodZero 
+                            ? (lateDynamicPrefix.includes(searchKeyword) ? lateDynamicPrefix : `${lateDynamicPrefix} (${searchKeyword})`) 
+                            : (`${lateDynamicPrefix} ${baseBehaviorNameMatch} ${searchKeyword}`);
+
+                        const newBehaviorRecord = {
+                            id: Date.now() + Math.floor(Math.random() * 1000),
+                            date: dbDate,
+                            studentId: stuCode,
+                            name: stuName,
+                            room: activeSubject.room,
+                            behaviorName: finalName.trim(),
+                            score: deductScore,
+                            recorder: user ? user.name : 'ระบบอัตโนมัติ',
+                            type: 'ลบ',
+                            suppressLineNotify: true
+                        };
+                
+                        batchPayload.behaviorsToAdd.push(newBehaviorRecord); 
+                        if (setBehaviorRecords) setBehaviorRecords(prev => [newBehaviorRecord, ...(prev || [])]);
+                    }
+                }
 
                 if (typeof callGAS === 'function') {
                     callGAS('saveAttendanceBatch', batchPayload).catch(e => console.error("Auto save scan error:", e));
@@ -6967,22 +7602,37 @@
                             const currentTeacher = (teachers || []).find(t => normalizeName(t.name) === normalizeName(user && user.name ? user.name : ''));
                             if (currentTeacher && currentTeacher.classLevel && currentTeacher.room) {
                                 const tClass = String(currentTeacher.classLevel).trim();
-                                const tRoom = String(currentTeacher.room).trim();
+                                // รองรับกรณีครูโฮมรูมดูแลหลายห้องคั่นด้วยลูกน้ำ
+                                const tRooms = String(currentTeacher.room).split(',').map(r => r.trim()).filter(Boolean);
                                 matchedStudents = (students || []).filter(s => {
-                                    return String(s.classLevel).trim() === tClass && String(s.room).trim() === tRoom;
+                                    return String(s.classLevel).trim() === tClass && tRooms.includes(String(s.room).trim());
                                 }).sort((a,b) => Number(a.code) - Number(b.code));
                             } else {
                                 matchedStudents = [];
                             }
                         } else {
-                            const subjectRegis = (registrations || []).filter(r => 
-                                String(r.subjectCode).trim() === String(matchedSchedule.subjectCode).trim() && 
-                                String(r.room).trim() === String(matchedSchedule.room).trim()
-                            );
+                            //แยกลูกน้ำ เพื่อดึงเด็กจากห้องที่ถูกรวมมาทั้งหมด
+                            const scheduleRooms = String(matchedSchedule.room).split(',').map(r => r.trim()).filter(Boolean);
                             
-                            matchedStudents = (students || []).filter(s => 
-                                subjectRegis.some(r => String(r.studentId).trim() === String(s.code).trim())
-                            ).sort((a,b) => Number(a.code) - Number(b.code));
+                            const subjectRegis = (registrations || []).filter(r => {
+                                const isSubjectMatch = String(r.subjectCode).trim() === String(matchedSchedule.subjectCode).trim();
+                                const rRooms = String(r.room).split(',').map(x => x.trim()).filter(Boolean);
+                                // เช็คว่ามีห้องที่ตรงกันหรือไม่
+                                const isRoomMatch = scheduleRooms.some(sr => rRooms.includes(sr)) || String(r.room).trim() === String(matchedSchedule.room).trim();
+                                return isSubjectMatch && isRoomMatch;
+                            });
+                            
+                            matchedStudents = (students || []).filter(s => {
+                                // 💡 แก้ไข: เพิ่มเงื่อนไขบังคับให้ดึงเฉพาะเด็กที่ "อยู่ตรงกับห้องในตารางสอนคาบนี้" เท่านั้น
+                                const sFullRoom = s.classLevel && s.room ? `${s.classLevel}/${s.room}` : '';
+                                const isInScheduleRoom = scheduleRooms.includes(sFullRoom) || scheduleRooms.includes(s.classLevel) || scheduleRooms.includes(s.room);
+                                
+                                // ถ้าเด็กคนนี้ไม่ได้อยู่ห้องที่กำหนดในตารางสอนคาบนี้ ให้ตัดรายชื่อทิ้งทันที
+                                if (!isInScheduleRoom && scheduleRooms.length > 0) return false;
+
+                                // ตรวจสอบขั้นสุดท้ายว่าเด็กคนนี้อยู่ในกลุ่มที่ลงทะเบียนไว้หรือไม่
+                                return subjectRegis.some(r => String(r.studentId).trim() === String(s.code).trim());
+                            }).sort((a,b) => Number(a.code) - Number(b.code));
                         }
                         
                         setTargetStudents(matchedStudents);
@@ -7163,6 +7813,47 @@
                     const periodLabel = activePeriods.length > 1 ? `(คาบ ${activePeriods[0]}-${activePeriods[activePeriods.length-1]})` : `(คาบ ${activePeriods[0]})`;
                     const baseBehaviorNameMatch = `วิชา${activeSubject.subjectName || ''} ${periodLabel}`;
 
+                    // --- คำนวณจำนวนนาทีที่มาสาย และหาเกณฑ์การหักคะแนน ---
+                    let lateMinutes = 0;
+                    let isEditingPast = false;
+                    let lateThresholdMinutes = 0; 
+                    let hasLateCriteria = false;
+                    let lateCriteriaKeyword = 'เข้าเรียนสาย';
+
+                    // ค้นหาเกณฑ์ "เข้าห้องเรียนสายเกิน [ ] นาที" จากการตั้งค่าพฤติกรรม
+                    const lateBehaviorSetting = (behaviorsSetting || []).find(b => b.name && b.name.includes('เข้าห้องเรียนสายเกิน'));
+                    if (lateBehaviorSetting) {
+                        hasLateCriteria = true;
+                        lateCriteriaKeyword = lateBehaviorSetting.name.replace(/\s*\(ครั้งที่.*\)/, '').trim(); 
+                        const match = lateCriteriaKeyword.match(/\d+/);
+                        if (match) {
+                            lateThresholdMinutes = parseInt(match[0], 10);
+                        }
+                    }
+
+                    if (activePeriods && activePeriods.length > 0) {
+                        const pSetting = (periodSettings || []).find(p => String(p.period) === String(activePeriods[0]));
+                        if (pSetting && pSetting.start) {
+                            const nowTime = new Date();
+                            const todayStr = `${nowTime.getFullYear()}-${String(nowTime.getMonth()+1).padStart(2,'0')}-${String(nowTime.getDate()).padStart(2,'0')}`;
+                            
+                            // ตรวจสอบว่าเช็คชื่อในวันปัจจุบันหรือไม่ (ป้องกันการแก้ไขย้อนหลังที่ทำให้เวลาเพี้ยน)
+                            if (currentDate === todayStr) {
+                                const [startH, startM] = pSetting.start.split(':').map(Number);
+                                const startTimeMinutes = startH * 60 + startM;
+                                const currentTimeMinutes = nowTime.getHours() * 60 + nowTime.getMinutes();
+                                lateMinutes = currentTimeMinutes - startTimeMinutes;
+                                
+                                if (lateMinutes < 0) lateMinutes = 0;
+                                if (lateMinutes > 180) isEditingPast = true; // ป้องกันการคำนวณผิดพลาดเมื่อบันทึกข้ามเวลาไปนานมาก (เกิน 3 ชั่วโมง)
+                            } else {
+                                isEditingPast = true; // เป็นการแก้ไขข้อมูลของวันอื่น
+                            }
+                        }
+                    }
+                    const lateDynamicPrefix = (lateMinutes > 0 && !isEditingPast) ? `เข้าเรียนสายเกินเวลา ${lateMinutes} นาที` : 'เข้าเรียนสายเกินเวลาที่กำหนด';
+                    // -----------------------------
+
                     let skipAddedCount = 0; let absentAddedCount = 0; let lateAddedCount = 0; let leaveAddedCount = 0; let flagAbsentAddedCount = 0; 
                     
                     const autoScoreSettings = schoolConfig && schoolConfig.autoScoreSettings ? schoolConfig.autoScoreSettings : {};
@@ -7190,7 +7881,7 @@
                             }
                         };
                         
-                        const addBehavior = (keyword, baseName, defaultScores) => {
+                        const addBehavior = (keyword, baseName, defaultScores, customPrefix = null) => {
                             const existing = (behaviorRecords || []).find(r => 
                                 formatDisplayDate(r.date) === dbDate && 
                                 String(r.studentId).trim() === String(stu.studentId).trim() &&
@@ -7218,9 +7909,11 @@
                                 }
                                 
                                 const deductScore = -Math.abs(Number(bSetting.score));
+                                const prefixToUse = customPrefix || bSetting.name;
+
                                 const finalName = isPeriodZero 
-                                    ? (bSetting.name.includes(searchKeyword) ? bSetting.name : `${bSetting.name} (${searchKeyword})`) 
-                                    : `${keyword}${baseName} ${searchKeyword}`;
+                                    ? (prefixToUse.includes(searchKeyword) ? prefixToUse : `${prefixToUse} (${searchKeyword})`) 
+                                    : (customPrefix ? `${customPrefix} ${baseName} ${searchKeyword}` : `${keyword} ${baseName} ${searchKeyword}`);
 
                                 const newBehaviorRecord = {
                                     id: Date.now() + Math.floor(Math.random() * 1000) + skipAddedCount + absentAddedCount + lateAddedCount + flagAbsentAddedCount,
@@ -7228,7 +7921,7 @@
                                     studentId: studentInfo.code,
                                     name: studentInfo.name,
                                     room: `${studentInfo.classLevel}/${studentInfo.room}`,
-                                    behaviorName: finalName,
+                                    behaviorName: finalName.trim(),
                                     score: deductScore,
                                     recorder: user ? user.name : 'ระบบอัตโนมัติ',
                                     type: 'ลบ',
@@ -7243,12 +7936,22 @@
                         };
 
                         if (stu.isChanged) {
-                            removeOldBehavior('หนีเรียน'); removeOldBehavior('ขาดเรียน'); removeOldBehavior('มาสาย'); removeOldBehavior('ไม่เข้าร่วมกิจกรรมหน้าเสาธง/โฮมรูม');
+                            removeOldBehavior('หนีเรียน'); 
+                            removeOldBehavior('ขาดเรียน'); 
+                            removeOldBehavior('มาสาย'); 
+                            removeOldBehavior('มาสายเกินเวลาที่กำหนด');
+                            removeOldBehavior('เข้าเรียนสาย'); 
+                            removeOldBehavior('เข้าห้องเรียนสายเกิน');
+                            removeOldBehavior('ไม่เข้าร่วมกิจกรรมหน้าเสาธง/โฮมรูม');
                         }
 
                         if (isPeriodZero) {
                             if ((stu.status === 'ขาด' || stu.status === 'หนีเรียน') && autoFlagAbsent) {
                                 if (addBehavior('ไม่เข้าร่วมกิจกรรมหน้าเสาธง/โฮมรูม', '', [-5, -5, -5])) flagAbsentAddedCount++;
+                            } else if (stu.status === 'สาย' && autoAttLate) {
+                                if (!hasLateCriteria || lateMinutes > lateThresholdMinutes) {
+                                    if (addBehavior(lateCriteriaKeyword, '', [-5, -10, -15], lateDynamicPrefix)) lateAddedCount++;
+                                }
                             }
                         } else {
                             if (stu.status === 'หนีเรียน' && autoAttSkip) {
@@ -7256,39 +7959,13 @@
                             } else if (stu.status === 'ขาด' && autoAttAbsent) {
                                 if (addBehavior('ขาดเรียน', baseBehaviorNameMatch, [-5, -10, -15])) absentAddedCount++;
                             } else if (stu.status === 'สาย' && autoAttLate) {
-                                if (addBehavior('มาสาย', baseBehaviorNameMatch, [-3, -5, -10])) lateAddedCount++;
+                                if (!hasLateCriteria || lateMinutes > lateThresholdMinutes) {
+                                    if (addBehavior(lateCriteriaKeyword, baseBehaviorNameMatch, [-3, -5, -10], lateDynamicPrefix)) lateAddedCount++;
+                                }
                             }
                         }
 
                         const existingLeave = (leaveRecords || []).find(r => formatDisplayDate(r.date) === dbDate && String(r.studentId).trim() === String(stu.studentId).trim());
-
-                        if (['ลาป่วย', 'ลากิจ', 'ไปกิจกรรม'].includes(stu.status)) {
-                            if (!existingLeave || existingLeave.leaveType !== stu.status) {
-                                if (existingLeave) {
-                                    const updatedLeaveRecord = { ...existingLeave, leaveType: stu.status };
-                                    batchPayload.leavesToEdit.push(updatedLeaveRecord);
-                                    if (setLeaveRecords) setLeaveRecords(prev => prev.map(r => r.id === existingLeave.id ? updatedLeaveRecord : r));
-                                } else {
-                                    const newLeaveRecord = {
-                                        id: Date.now() + Math.floor(Math.random() * 1000) + 1 + leaveAddedCount,
-                                        date: dbDate,
-                                        studentId: studentInfo.code,
-                                        name: studentInfo.name,
-                                        room: `${studentInfo.classLevel}/${studentInfo.room}`,
-                                        leaveType: stu.status,
-                                        recorder: user ? user.name : 'ระบบอัตโนมัติ'
-                                    };
-                                    batchPayload.leavesToAdd.push(newLeaveRecord);
-                                    if (setLeaveRecords) setLeaveRecords(prev => [newLeaveRecord, ...(prev || [])]);
-                                    leaveAddedCount++;
-                                }
-                            }
-                        } else {
-                            if (existingLeave) {
-                                batchPayload.leavesToDelete.push(existingLeave.id);
-                                if (setLeaveRecords) setLeaveRecords(prev => prev.filter(p => p.id !== existingLeave.id));
-                            }
-                        }
                     }
 
                     const response = await callGAS('saveAttendanceBatch', batchPayload);
@@ -7307,26 +7984,26 @@
                         return { ...prev, [cacheKey]: [...filtered, ...toAdd] };
                     });
 
-                    setIsEditMode(true); 
+            setIsEditMode(true); 
 
-                    let alertMsg = activePeriods.length > 1 ? `จำนวน ${activePeriods.length} คาบติดต่อกัน` : 'ข้อมูลถูกส่งเข้าสู่ฐานข้อมูลเรียบร้อยแล้ว';
-                    if (skipAddedCount > 0) alertMsg += `\n* หักคะแนนหนีเรียนอัตโนมัติ ${skipAddedCount} คน`;
-                    if (absentAddedCount > 0) alertMsg += `\n* หักคะแนนขาดเรียนอัตโนมัติ ${absentAddedCount} คน`;
-                    if (lateAddedCount > 0) alertMsg += `\n* หักคะแนนมาสายอัตโนมัติ ${lateAddedCount} คน`;
-                    if (flagAbsentAddedCount > 0) alertMsg += `\n* หักคะแนนขาดหน้าเสาธงอัตโนมัติ ${flagAbsentAddedCount} คน`;
-                    if (leaveAddedCount > 0) alertMsg += `\n* เพิ่มประวัติแจ้งลาอัตโนมัติ ${leaveAddedCount} คน`;
-                    
-                    setSavePopup({ type: 'success', title: isEditMode ? 'แก้ไขข้อมูลสำเร็จ!' : 'บันทึกข้อมูลสำเร็จ!', message: alertMsg });
-                    setTimeout(() => setSavePopup(null), 3000);
+            let alertMsg = activePeriods.length > 1 ? `จำนวน ${activePeriods.length} คาบติดต่อกัน` : 'ข้อมูลถูกส่งเข้าสู่ฐานข้อมูลเรียบร้อยแล้ว';
+            if (skipAddedCount > 0) alertMsg += `\n* หักคะแนนหนีเรียนอัตโนมัติ ${skipAddedCount} คน`;
+            if (absentAddedCount > 0) alertMsg += `\n* หักคะแนนขาดเรียนอัตโนมัติ ${absentAddedCount} คน`;
+            if (lateAddedCount > 0) alertMsg += `\n* หักคะแนนเข้าเรียนสายอัตโนมัติ ${lateAddedCount} คน`;
+            if (flagAbsentAddedCount > 0) alertMsg += `\n* หักคะแนนขาดหน้าเสาธงอัตโนมัติ ${flagAbsentAddedCount} คน`;
+            if (leaveAddedCount > 0) alertMsg += `\n* เพิ่มประวัติแจ้งลาอัตโนมัติ ${leaveAddedCount} คน`;
+            
+            setSavePopup({ type: 'success', title: isEditMode ? 'แก้ไขข้อมูลสำเร็จ!' : 'บันทึกข้อมูลสำเร็จ!', message: alertMsg });
+            setTimeout(() => setSavePopup(null), 3000);
 
-                } catch (error) {
-                    setSavePopup({ type: 'error', title: 'เกิดข้อผิดพลาด', message: error.message });
-                    setTimeout(() => setSavePopup(null), 4000);
-                }
-                setIsSaving(false);
-            };
+        } catch (error) {
+            setSavePopup({ type: 'error', title: 'เกิดข้อผิดพลาด', message: error.message });
+            setTimeout(() => setSavePopup(null), 4000);
+        }
+        setIsSaving(false);
+    };
 
-            const standardDepts = ['วิทยาศาสตร์และเทคโนโลยี', 'คณิตศาสตร์', 'ภาษาไทย', 'ภาษาต่างประเทศ', 'สังคมศึกษา ศาสนาและวัฒนธรรม', 'การงานอาชีพ', 'สุขศึกษาและพลศึกษา', 'ศิลปะ'];
+    const standardDepts = ['วิทยาศาสตร์และเทคโนโลยี', 'คณิตศาสตร์', 'ภาษาไทย', 'ภาษาต่างประเทศ', 'สังคมศึกษา ศาสนาและวัฒนธรรม', 'การงานอาชีพ', 'สุขศึกษาและพลศึกษา', 'ศิลปะ'];
             const departments = [...new Set([...standardDepts, ...(teachers || []).map(t => t.department).filter(Boolean)])].sort();
             const filteredTeachersForReport = teachers.filter(t => reportDept ? t.department === reportDept : true);
 
@@ -7372,6 +8049,15 @@
 
                     combinedSchedules.forEach(row => {
                         const parsed = parseScheduleRow(row);
+                        
+                        // กรองข้อมูลตามประเภทรายงานที่เลือก (รายวิชา หรือ คาบ 0)
+                        const sSubCheck = String(parsed.subjectCode || '').replace(/[^ก-๙a-zA-Z0-9]/g, '').toUpperCase();
+                        const sPerCheck = String(parsed.period || '').trim();
+                        const isHomeroom = sSubCheck === 'HR000' || sPerCheck === '0' || sPerCheck === 'คาบ 0' || sPerCheck === 'โฮมรูม';
+                        
+                        if (reportDataType === 'homeroom' && !isHomeroom) return;
+                        if (reportDataType === 'subject' && isHomeroom) return;
+
                         if (parsed.day === dayNameTH) {
                             const tNameNorm = normalizeName(parsed.teacherName);
                             const teacherObj = (teachers || []).find(t => normalizeName(t.name) === tNameNorm);
@@ -7550,7 +8236,7 @@
                                             <td class="td-center">${sub.subjectCode}</td>
                                             <td>${sub.subjectName}</td>
                                             <td class="td-center">${sub.room}</td>
-                                            <td class="td-center" style="color: ${titleColor} !important; font-weight: bold;">${statusText}</td>
+                                            <td class="td-center" style="color: ${sub.color ? sub.color : titleColor} !important; font-weight: bold;">${sub.status ? sub.status : statusText}</td>
                                         </tr>`;
                                     });
                                 });
@@ -7560,11 +8246,22 @@
                         return html;
                     };
 
-                    if (reportStatusFilter === 'all' || reportStatusFilter === 'checked') {
-                        htmlContent += renderTable(checkedGrouped, '✅ รายงานการเช็คชื่อเข้าเรียนของครูผู้สอน (รายวิชาที่มีการเช็คชื่อแล้ว)', 'ไม่มีรายวิชาที่มีการเช็คชื่อในวันนี้', '#16a34a', 'เช็คชื่อแล้ว');
-                    }
-                    if (reportStatusFilter === 'all' || reportStatusFilter === 'unchecked') {
-                        htmlContent += renderTable(uncheckedGrouped, '❌ รายวิชาที่ไม่มีการเช็คชื่อเข้าเรียนประจำวัน', 'ทุกรายวิชาได้รับการเช็คชื่อเรียบร้อยแล้ว', '#dc2626', 'ยังไม่เช็คชื่อ');
+                    if (reportDataType === 'homeroom') {
+                        // กรณีเลือกรายงานคาบ 0 ให้แสดงรวมกันในตารางเดียว (ฟอร์มเดียว)
+                        const combinedHomerooms = [
+                            ...checkedClasses.map(c => ({...c, status: '✅ เช็คชื่อแล้ว', color: '#16a34a'})),
+                            ...uncheckedClasses.map(c => ({...c, status: '❌ ยังไม่เช็คชื่อ', color: '#dc2626'}))
+                        ];
+                        const groupedHomerooms = groupClasses(combinedHomerooms);
+                        htmlContent += renderTable(groupedHomerooms, 'รายงานการเช็คชื่อ คาบ 0 (กิจกรรมหน้าเสาธง/โฮมรูม)', 'ไม่มีข้อมูลกิจกรรมหน้าเสาธง/โฮมรูม ในวันนี้', '#4f46e5', '');
+                    } else {
+                        // กรณีเลือกระยะวิชา ให้แสดงตามฟิลเตอร์เดิม
+                        if (reportStatusFilter === 'all' || reportStatusFilter === 'checked') {
+                            htmlContent += renderTable(checkedGrouped, '✅ รายงานการเช็คชื่อเข้าเรียนของครูผู้สอน (รายวิชาที่มีการเช็คชื่อแล้ว)', 'ไม่มีรายวิชาที่มีการเช็คชื่อในวันนี้', '#16a34a', 'เช็คชื่อแล้ว');
+                        }
+                        if (reportStatusFilter === 'all' || reportStatusFilter === 'unchecked') {
+                            htmlContent += renderTable(uncheckedGrouped, '❌ รายวิชาที่ไม่มีการเช็คชื่อเข้าเรียนประจำวัน', 'ทุกรายวิชาได้รับการเช็คชื่อเรียบร้อยแล้ว', '#dc2626', 'ยังไม่เช็คชื่อ');
+                        }
                     }
 
                     htmlContent += `</div></body></html>`;
@@ -7614,8 +8311,8 @@
                                 <div className="hidden md:flex bg-gray-800 text-ns-yellow font-mono font-bold px-3 py-1 rounded-lg text-lg shadow-inner items-center">
                                     <i className="fa-regular fa-clock mr-2"></i> {timeStrWithSec}
                                 </div>
-                                {/* ปุ่มเมนูสร้างรายงาน สำหรับ Admin */}
-                                {user && user.role === 'admin' && (
+                                {/* ปุ่มเมนูสร้างรายงาน สำหรับ Admin และ ครูฝ่ายปกครอง (administrative) */}
+                                {user && (user.role === 'admin' || user.role === 'administrative') && (
                                     <button 
                                         onClick={() => setShowAdminReport(true)}
                                         className="flex-1 md:flex-none justify-center bg-indigo-600 hover:bg-indigo-700 text-white px-3 md:px-4 py-2 rounded-lg font-bold shadow-sm transition flex items-center text-xs md:text-base"
@@ -7745,54 +8442,85 @@
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-200 bg-white">
-                                            {targetStudents.length > 0 ? targetStudents.map((stu, idx) => {
-                                                let currentStatus = attendanceData[stu.code];
-                                                if (!currentStatus) currentStatus = isScannerMode ? '' : 'มา';
+                                            {targetStudents.length > 0 ? (() => {
+                                                const groupedStudents = {};
                                                 
-                                                const isLeaveAuto = ['ลาป่วย', 'ลากิจ', 'ไปกิจกรรม'].includes(currentStatus);
-                                                const isScanned = scannedStudents.includes(stu.code); 
+                                                // จัดกลุ่มนักเรียนตามชั้น/ห้อง
+                                                targetStudents.forEach(stu => {
+                                                    const roomKey = `${stu.classLevel || ''}/${stu.room || ''}`;
+                                                    if (!groupedStudents[roomKey]) groupedStudents[roomKey] = [];
+                                                    groupedStudents[roomKey].push(stu);
+                                                });
                                                 
-                                                return (
-                                                    <tr key={stu.code} className={`hover:bg-gray-50 transition ${isLeaveAuto ? 'bg-yellow-50' : currentStatus === 'หนีเรียน' ? 'bg-rose-50' : isScanned ? 'bg-blue-50' : ''}`}>
-                                                        <td className="p-1 md:p-3 text-center text-gray-500 font-bold text-[10px] md:text-sm">{idx + 1}</td>
-                                                        <td className="hidden md:table-cell p-3 text-center font-mono text-sm">{stu.code}</td>
-                                                        <td className="p-2 md:p-3 font-bold text-gray-800">
-                                                            <div className="leading-tight text-base md:text-lg" style={{ fontFamily: "'Sarabun', sans-serif" }}>{stu.name}</div>
-                                                            <div className="md:hidden text-[9px] text-gray-500 font-mono mt-0.5 tracking-wider">{stu.code}</div>
-                                                            <div className="flex flex-wrap gap-1 mt-1">
-                                                                {isScanned && <span className="text-[8px] md:text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full border border-blue-300"><i className="fa-solid fa-qrcode"></i> สแกน</span>}
-                                                                {isLeaveAuto && <span className="text-[8px] md:text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded-full border border-yellow-300">ลา</span>}
-                                                                {currentStatus === 'หนีเรียน' && <span className="text-[8px] md:text-[10px] bg-rose-200 text-rose-800 px-1.5 py-0.5 rounded-full border border-rose-300 animate-pulse">หักคะแนน</span>}
-                                                            </div>
-                                                        </td>
-                                                        <td className="p-1 md:p-2 border-l border-gray-100 text-center">
-                                                            <select
-                                                                value={currentStatus}
-                                                                onChange={(e) => handleStatusChange(stu.code, e.target.value)}
-                                                                className={`w-full p-1.5 md:p-2 h-8 md:h-auto border rounded-md md:rounded-lg font-bold outline-none cursor-pointer transition shadow-sm text-xs md:text-sm ${
-                                                                    currentStatus === '' ? 'bg-gray-100 text-gray-400 border-gray-300' :
-                                                                    currentStatus === 'มา' ? 'bg-green-100 text-green-700 border-green-400' :
-                                                                    currentStatus === 'สาย' ? 'bg-orange-100 text-orange-700 border-orange-400' :
-                                                                    currentStatus === 'ขาด' ? 'bg-red-100 text-red-700 border-red-400' :
-                                                                    currentStatus === 'ลาป่วย' ? 'bg-purple-100 text-purple-700 border-purple-400' :
-                                                                    currentStatus === 'ลากิจ' ? 'bg-indigo-100 text-indigo-700 border-indigo-400' :
-                                                                    currentStatus === 'ไปกิจกรรม' ? 'bg-blue-100 text-blue-700 border-blue-400' :
-                                                                    currentStatus === 'หนีเรียน' ? 'bg-rose-100 text-rose-700 border-rose-400' : 'bg-white'
-                                                                }`}
-                                                            >
-                                                                {currentStatus === '' && <option value="" disabled>-</option>}
-                                                                <option value="มา">มา</option>
-                                                                <option value="สาย">สาย</option>
-                                                                <option value="ขาด">ขาด</option>
-                                                                <option value="ลาป่วย">ป่วย</option>
-                                                                <option value="ลากิจ">กิจ</option>
-                                                                <option value="ไปกิจกรรม">กิจกรรม</option>
-                                                                <option value="หนีเรียน">หนี</option>
-                                                            </select>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            }) : (
+                                                // เรียงลำดับห้องจากน้อยไปมาก
+                                                const sortedRooms = Object.keys(groupedStudents).sort((a, b) => a.localeCompare(b, 'th', { numeric: true }));
+                                                
+                                                // 💡 แก้ไข: ใช้ความยาวของ sortedRooms ในการตรวจสอบว่ามีหลายห้องหรือไม่ แทนการหาเครื่องหมายลูกน้ำ
+                                                const hasMultipleRooms = sortedRooms.length > 1;
+
+                                                return sortedRooms.map(roomKey => (
+                                                    <React.Fragment key={roomKey}>
+                                                        {/* แถบแยกหมวดหมู่ชั้น/ห้อง (แสดงเฉพาะกรณีมีหลายห้องเรียนรวมกัน) */}
+                                                        {hasMultipleRooms && (
+                                                            <tr className="bg-indigo-50 border-b border-indigo-100">
+                                                                <td colSpan="4" className="p-2 md:p-3 font-bold text-indigo-800 text-xs md:text-sm">
+                                                                    <i className="fa-solid fa-users-rectangle mr-2"></i> ชั้น/ห้อง: {roomKey} <span className="text-gray-500 font-normal ml-2">({groupedStudents[roomKey].length} คน)</span>
+                                                                </td>
+                                                            </tr>
+                                                        )}
+                                                        
+                                                        {/* รายชื่อนักเรียนในแต่ละห้อง */}
+                                                        {groupedStudents[roomKey].map((stu, idx) => {
+                                                            let currentStatus = attendanceData[stu.code];
+                                                            if (!currentStatus) currentStatus = isScannerMode ? '' : 'มา';
+                                                            
+                                                            const isLeaveAuto = ['ลาป่วย', 'ลากิจ', 'ไปกิจกรรม'].includes(currentStatus);
+                                                            const isScanned = scannedStudents.includes(stu.code); 
+                                                            
+                                                            return (
+                                                                <tr key={stu.code} className={`hover:bg-gray-50 transition ${isLeaveAuto ? 'bg-yellow-50' : currentStatus === 'หนีเรียน' ? 'bg-rose-50' : isScanned ? 'bg-blue-50' : ''}`}>
+                                                                    <td className="p-1 md:p-3 text-center text-gray-500 font-bold text-[10px] md:text-sm">{idx + 1}</td>
+                                                                    <td className="hidden md:table-cell p-3 text-center font-mono text-sm">{stu.code}</td>
+                                                                    <td className="p-2 md:p-3 font-bold text-gray-800">
+                                                                        <div className="leading-tight text-base md:text-lg" style={{ fontFamily: "'Sarabun', sans-serif" }}>{stu.name}</div>
+                                                                        <div className="md:hidden text-[9px] text-gray-500 font-mono mt-0.5 tracking-wider">{stu.code}</div>
+                                                                        <div className="flex flex-wrap gap-1 mt-1">
+                                                                            {isScanned && <span className="text-[8px] md:text-[10px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full border border-blue-300"><i className="fa-solid fa-qrcode"></i> สแกน</span>}
+                                                                            {isLeaveAuto && <span className="text-[8px] md:text-[10px] bg-yellow-200 text-yellow-800 px-1.5 py-0.5 rounded-full border border-yellow-300">ลา</span>}
+                                                                            {currentStatus === 'หนีเรียน' && <span className="text-[8px] md:text-[10px] bg-rose-200 text-rose-800 px-1.5 py-0.5 rounded-full border border-rose-300 animate-pulse">หักคะแนน</span>}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="p-1 md:p-2 border-l border-gray-100 text-center">
+                                                                        <select
+                                                                            value={currentStatus}
+                                                                            onChange={(e) => handleStatusChange(stu.code, e.target.value)}
+                                                                            className={`w-full p-1.5 md:p-2 h-8 md:h-auto border rounded-md md:rounded-lg font-bold outline-none cursor-pointer transition shadow-sm text-xs md:text-sm ${
+                                                                                currentStatus === '' ? 'bg-gray-100 text-gray-400 border-gray-300' :
+                                                                                currentStatus === 'มา' ? 'bg-green-100 text-green-700 border-green-400' :
+                                                                                currentStatus === 'สาย' ? 'bg-orange-100 text-orange-700 border-orange-400' :
+                                                                                currentStatus === 'ขาด' ? 'bg-red-100 text-red-700 border-red-400' :
+                                                                                currentStatus === 'ลาป่วย' ? 'bg-purple-100 text-purple-700 border-purple-400' :
+                                                                                currentStatus === 'ลากิจ' ? 'bg-indigo-100 text-indigo-700 border-indigo-400' :
+                                                                                currentStatus === 'ไปกิจกรรม' ? 'bg-blue-100 text-blue-700 border-blue-400' :
+                                                                                currentStatus === 'หนีเรียน' ? 'bg-rose-100 text-rose-700 border-rose-400' : 'bg-white'
+                                                                            }`}
+                                                                        >
+                                                                            {currentStatus === '' && <option value="" disabled>-</option>}
+                                                                            <option value="มา">มา</option>
+                                                                            <option value="สาย">สาย</option>
+                                                                            <option value="ขาด">ขาด</option>
+                                                                            <option value="ลาป่วย">ป่วย</option>
+                                                                            <option value="ลากิจ">กิจ</option>
+                                                                            <option value="ไปกิจกรรม">กิจกรรม</option>
+                                                                            <option value="หนีเรียน">หนี</option>
+                                                                        </select>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </React.Fragment>
+                                                ));
+                                            })() : (
                                                 <tr>
                                                     <td colSpan="4" className="text-center p-4 md:p-10 text-gray-500">
                                                         <i className="fa-solid fa-address-book text-2xl md:text-4xl mb-2 md:mb-3 text-gray-300"></i><br/>
@@ -7835,6 +8563,19 @@
                                 
                                 <div className="space-y-4">
                                     <div>
+                                        <label className="block text-sm font-bold text-gray-700 mb-2">ข้อมูลที่ต้องการรายงาน</label>
+                                        <div className="flex gap-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input type="radio" name="reportDataType" value="subject" checked={reportDataType === 'subject'} onChange={(e) => setReportDataType(e.target.value)} className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" />
+                                                <span className="text-sm font-medium text-gray-800">รายวิชา</span>
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input type="radio" name="reportDataType" value="homeroom" checked={reportDataType === 'homeroom'} onChange={(e) => setReportDataType(e.target.value)} className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" />
+                                                <span className="text-sm font-medium text-gray-800">คาบ 0 (หน้าเสาธง/โฮมรูม)</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div>
                                         <label className="block text-sm font-bold text-gray-700 mb-1">วันที่เช็คชื่อ</label>
                                         <input 
                                             type="date" 
@@ -7843,18 +8584,20 @@
                                             className="w-full border-2 border-indigo-200 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none" 
                                         />
                                     </div>
-                                    <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-1">ประเภทรายงาน</label>
-                                        <select 
-                                            value={reportStatusFilter} 
-                                            onChange={(e) => setReportStatusFilter(e.target.value)} 
-                                            className="w-full border-2 border-indigo-200 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
-                                        >
-                                            <option value="all">ทั้งหมด</option>
-                                            <option value="checked">รายวิชาที่มีการเช็คชื่อแล้ว</option>
-                                            <option value="unchecked">รายวิชาที่ยังไม่ได้เช็คชื่อ</option>
-                                        </select>
-                                    </div>
+                                    {reportDataType === 'subject' && (
+                                        <div>
+                                            <label className="block text-sm font-bold text-gray-700 mb-1">ประเภทรายงาน</label>
+                                            <select 
+                                                value={reportStatusFilter} 
+                                                onChange={(e) => setReportStatusFilter(e.target.value)} 
+                                                className="w-full border-2 border-indigo-200 rounded-lg p-2 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                                            >
+                                                <option value="all">ทั้งหมด</option>
+                                                <option value="checked">รายวิชาที่มีการเช็คชื่อแล้ว</option>
+                                                <option value="unchecked">รายวิชาที่ยังไม่ได้เช็คชื่อ</option>
+                                            </select>
+                                        </div>
+                                    )}
                                     <div>
                                         <label className="block text-sm font-bold text-gray-700 mb-1">กลุ่มสาระการเรียนรู้</label>
                                         <select 
@@ -7935,7 +8678,7 @@
                 </div>
             );
         };
-        
+
         // 15. หน้าลงทะเบียนยกเว้นมาสาย (ExemptView)
         const ExemptView = ({ students, exemptions, setExemptions, user, isSyncing }) => {
             const TARGET_SHEET_ID = '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48';
@@ -8348,6 +9091,37 @@
             const [editingBehaviorId, setEditingBehaviorId] = useState(null);
             const [editBehaviorData, setEditBehaviorData] = useState({});
 
+            // 💡 ปรับแต่งฟังก์ชันแปลงสิทธิ์ (Role) ให้รัดกุม ป้องกันบั๊กเติมคำว่า "ครู" ให้ "แอดมิน"
+            const getRoleValue = (role) => {
+                if (!role) return 'all';
+                const r = String(role).trim().toLowerCase();
+                
+                // ลบคำว่า "ครู" ออกชั่วคราว เพื่อป้องกันการเช็คเงื่อนไขที่ซ้ำซ้อน
+                const cleanRole = r.replace(/^ครู\s*/, ''); 
+                
+                if (cleanRole === 'admin' || cleanRole === 'แอดมิน') return 'admin';
+                if (cleanRole === 'dept_admin' || cleanRole.includes('กลุ่มสาระ')) return 'dept_admin';
+                if (cleanRole === 'executive' || cleanRole.includes('บริหาร') || cleanRole.includes('ผอ')) return 'executive';
+                if (cleanRole === 'administrative' || cleanRole.includes('ปกครอง')) return 'administrative';
+                if (cleanRole === 'user' || cleanRole.includes('ทั่วไป') || cleanRole === 'ผู้ใช้ทั่วไป') return 'user';
+                if (cleanRole === 'all' || cleanRole.includes('ทุกคน')) return 'all';
+                
+                return r; // คืนค่าเดิมหากไม่ตรงกับอะไรเลย
+            };
+
+            const getRoleLabel = (role) => {
+                const val = getRoleValue(role);
+                switch(val) {
+                    case 'admin': return 'แอดมิน';
+                    case 'dept_admin': return 'แอดมินกลุ่มสาระ';
+                    case 'executive': return 'ผู้บริหาร';
+                    case 'administrative': return 'ครูฝ่ายปกครอง';
+                    case 'user': return 'ครูทั่วไป';
+                    case 'all': return 'ทุกคน';
+                    default: return <span className="text-red-500 font-bold" title="ค่าเดิมในฐานข้อมูล">ไม่พบข้อมูล ({String(role || 'ว่าง')})</span>;
+                }
+            };
+
             // --- ฟังก์ชันดาวน์โหลดเทมเพลต CSV และนำเข้าข้อมูลพฤติกรรม ---
             const handleDownloadBehaviorTemplate = () => {
                 // เพิ่ม BOM (\uFEFF) เพื่อให้ Excel อ่านภาษาไทยได้ถูกต้อง
@@ -8401,7 +9175,7 @@
             // --- ฟังก์ชันแก้ไขพฤติกรรมในตาราง ---
             const startEditBehavior = (b) => {
                 setEditingBehaviorId(b.id);
-                setEditBehaviorData({ ...b, role: b.role || 'all' });
+                setEditBehaviorData({ ...b, role: getRoleValue(b.role) }); // ดึงค่า Role เดิมมาแสดงให้ถูกต้อง
             };
 
             const saveEditBehavior = () => {
@@ -8618,7 +9392,7 @@
                                                     <input type="checkbox" checked={(rolePermissions['executive'] || []).includes(m.id)} onChange={() => togglePermission('executive', m.id)} className="w-5 h-5 text-teal-600 rounded cursor-pointer" />
                                                 </td>
                                                 <td className="p-2 border text-center bg-orange-50/30">
-                                                    <input type="checkbox" checked={(rolePermissions['discipline'] || []).includes(m.id)} onChange={() => togglePermission('discipline', m.id)} className="w-5 h-5 text-orange-600 rounded cursor-pointer" />
+                                                    <input type="checkbox" checked={(rolePermissions['administrative'] || []).includes(m.id)} onChange={() => togglePermission('administrative', m.id)} className="w-5 h-5 text-orange-600 rounded cursor-pointer" />
                                                 </td>
                                                 <td className="p-2 border text-center bg-blue-50/30">
                                                     <input type="checkbox" checked={(rolePermissions['user'] || []).includes(m.id)} onChange={() => togglePermission('user', m.id)} className="w-5 h-5 text-blue-600 rounded cursor-pointer" />
@@ -8788,7 +9562,7 @@
                                         <option value="admin">แอดมิน</option>
                                         <option value="dept_admin">แอดมินกลุ่มสาระ</option>
                                         <option value="executive">ผู้บริหาร</option>
-                                        <option value="discipline">ครูฝ่ายปกครอง</option>
+                                        <option value="administrative">ครูฝ่ายปกครอง</option>
                                         <option value="user">ครูทั่วไป</option>
                                     </select>
                                 </div>
@@ -8830,24 +9604,28 @@
                                                 {editingBehaviorId === b.id ? (
                                                     <React.Fragment>
                                                         <td className="p-2 border text-center">
-                                                            <select value={editBehaviorData.type} onChange={e => setEditBehaviorData({...editBehaviorData, type: e.target.value})} className="border rounded p-1 text-sm w-full outline-none focus:ring-2 focus:ring-ns-blue">
-                                                                <option value="บวก">บวก (+)</option>
-                                                                <option value="ลบ">ลบ (-)</option>
+                                                            <select value={editBehaviorData.type || 'บวก'} onChange={e => setEditBehaviorData({...editBehaviorData, type: e.target.value})} className="border rounded p-1 text-sm w-full outline-none focus:ring-2 focus:ring-ns-blue">
+                                                                <option value="บวก">บวก</option>
+                                                                <option value="ลบ">ลบ</option>
                                                             </select>
                                                         </td>
                                                         <td className="p-2 border">
-                                                            <input type="text" value={editBehaviorData.name} onChange={e => setEditBehaviorData({...editBehaviorData, name: e.target.value})} className="border rounded p-1 text-sm w-full outline-none focus:ring-2 focus:ring-ns-blue" />
+                                                            <input type="text" value={editBehaviorData.name || ''} onChange={e => setEditBehaviorData({...editBehaviorData, name: e.target.value})} className="border rounded p-1 text-sm w-full outline-none focus:ring-2 focus:ring-ns-blue" />
                                                         </td>
                                                         <td className="p-2 border text-center">
-                                                            <input type="number" value={editBehaviorData.score} onChange={e => setEditBehaviorData({...editBehaviorData, score: e.target.value})} className="border rounded p-1 text-sm w-full text-center outline-none focus:ring-2 focus:ring-ns-blue" />
+                                                            <input type="number" value={editBehaviorData.score || ''} onChange={e => setEditBehaviorData({...editBehaviorData, score: e.target.value})} className="border rounded p-1 text-sm w-full text-center outline-none focus:ring-2 focus:ring-ns-blue" />
                                                         </td>
                                                         <td className="p-2 border text-center">
-                                                            <select value={editBehaviorData.role || 'all'} onChange={e => setEditBehaviorData({...editBehaviorData, role: e.target.value})} className="border rounded p-1 text-sm w-full outline-none focus:ring-2 focus:ring-ns-blue">
+                                                            <select 
+                                                                value={getRoleValue(editBehaviorData.role)} 
+                                                                onChange={e => setEditBehaviorData({...editBehaviorData, role: e.target.value})} 
+                                                                className="border rounded p-1 text-sm w-full outline-none focus:ring-2 focus:ring-ns-blue"
+                                                            >
                                                                 <option value="all">ทุกคน</option>
                                                                 <option value="admin">แอดมิน</option>
                                                                 <option value="dept_admin">แอดมินกลุ่มสาระ</option>
                                                                 <option value="executive">ผู้บริหาร</option>
-                                                                <option value="discipline">ครูฝ่ายปกครอง</option>
+                                                                <option value="administrative">ครูฝ่ายปกครอง</option>
                                                                 <option value="user">ครูทั่วไป</option>
                                                             </select>
                                                         </td>
@@ -8864,7 +9642,7 @@
                                                         <td className="p-2 border">{b.name}</td>
                                                         <td className={`p-2 border text-center font-bold ${b.type === 'บวก' ? 'text-green-600' : 'text-red-600'}`}>{b.type === 'ลบ' && b.score > 0 ? `-${b.score}` : (b.type === 'บวก' && b.score > 0 ? `+${b.score}` : b.score)}</td>
                                                         <td className="p-2 border text-center text-sm text-gray-600">
-                                                            {b.role === 'admin' ? 'แอดมิน' : b.role === 'dept_admin' ? 'แอดมินกลุ่มสาระ' : b.role === 'executive' ? 'ผู้บริหาร' : b.role === 'discipline' ? 'ครูฝ่ายปกครอง' : b.role === 'user' ? 'ครูทั่วไป' : 'ทุกคน'}
+                                                            {getRoleLabel(b.role)}
                                                         </td>
                                                         <td className="p-2 border text-center whitespace-nowrap">
                                                             <button onClick={() => startEditBehavior(b)} className="text-blue-500 hover:text-blue-700 bg-blue-100 p-1.5 rounded mr-2" title="แก้ไข"><i className="fa-solid fa-pen"></i></button>
@@ -9179,7 +9957,7 @@
                                     <option value="admin">แอดมิน (Admin)</option>
                                     <option value="dept_admin">แอดมินกลุ่มสาระ</option>
                                     <option value="executive">ผู้บริหาร</option>
-                                    <option value="discipline">ครูฝ่ายปกครอง</option>
+                                    <option value="administrative">ครูฝ่ายปกครอง</option>
                                     <option value="user">ผู้ใช้ทั่วไป (User)</option>
                                 </select>
                             </div>
@@ -10701,7 +11479,7 @@
                 return acc;
             }, []);
 
-            const standardDepts = ['วิทยาศาสตร์และเทคโนโลยี', 'คณิตศาสตร์', 'ภาษาไทย', 'ภาษาต่างประเทศ', 'สังคมศึกษา ศาสนาและวัฒนธรรม', 'การงานอาชีพ', 'สุขศึกษาและพลศึกษา', 'ศิลปะ'];
+            const standardDepts = ['วิทยาศาสตร์และเทคโนโลยี', 'คณิตศาสตร์', 'ภาษาไทย', 'ภาษาต่างประเทศ', 'สังคมศึกษา ศาสนาและวัฒนธรรม', 'การงานอาชีพ', 'สุขศึกษาและพลศึกษา', 'ศิลปะ', 'แนะแนว'];
             const uniqueDepts = [...new Set([...standardDepts, ...(teachers || []).map(t => t.department).filter(Boolean)])].sort();
             
             const filteredTeachersByDept = (teachers || [])
@@ -10847,23 +11625,71 @@
                         return false;
                     };
 
-                    const subjectRegis = (registrations || []).filter(r =>
-                        String(r.subjectCode).trim() === cleanTargetCode &&
-                        normalizeRoomStr(r.room) === cleanTargetRoom
-                    );
+                    // 💡 แก้ไข: ระบบกรองรายวิชาที่ลงทะเบียน ให้รองรับการลงทะเบียนแบบควบรวมหลายห้อง (Comma Separated)
+                    const subjectRegis = (registrations || []).filter(r => {
+                        const isSubjectMatch = String(r.subjectCode).trim() === cleanTargetCode;
+                        
+                        // แตกห้องที่รวมกันด้วยลูกน้ำออกมาเช็ค
+                        const rRooms = String(r.room).split(',').map(x => normalizeRoomStr(x));
+                        const isRoomMatch = rRooms.includes(cleanTargetRoom) || normalizeRoomStr(r.room) === cleanTargetRoom;
+                        
+                        // เช็คชื่อครูให้ตรงด้วย ป้องกันวิชาเดียวกันแต่ครูคนละคน
+                        const rTeacherNorm = normalizeName(r.teacherName);
+                        const tTeacherNorm = normalizeName(teacher);
+                        const isTeacherMatch = !teacher || (rTeacherNorm === tTeacherNorm) || (rTeacherNorm && tTeacherNorm && rTeacherNorm.includes(tTeacherNorm));
+
+                        return isSubjectMatch && isRoomMatch && isTeacherMatch;
+                    });
 
                     const cLevel = String(room).split('/')[0] ? String(room).split('/')[0].trim() : '';
                     const cRoom = String(room).split('/')[1] ? String(room).split('/')[1].trim() : '';
                     
-                    let matchedStudents = (students || []).filter(s => {
-                        const sRoom = normalizeRoomStr(`${s.classLevel || ''}/${s.room || ''}`);
-                        return sRoom === cleanTargetRoom || (s.classLevel === cLevel && s.room === cRoom);
-                    }).sort((a,b) => Number(a.code) - Number(b.code));
+                    let matchedStudents = [];
 
                     if (subjectRegis.length > 0) {
-                        matchedStudents = matchedStudents.filter(s =>
-                            subjectRegis.some(r => isMatchId(r.studentId, s.code))
-                        );
+                        // 💡 แก้ไข: ในหน้ารายงาน ดึงเฉพาะนักเรียนในห้องเป้าหมาย (ป้องกันรายชื่อห้องอื่นปนเข้ามา)
+                        const targetRoomsArr = String(room).split(',').map(x => x.trim()).filter(Boolean);
+
+                        matchedStudents = (students || []).filter(s => {
+                            const sFullRoom = s.classLevel && s.room ? `${s.classLevel}/${s.room}` : '';
+                            const isInTargetRoom = targetRoomsArr.includes(sFullRoom) || targetRoomsArr.includes(s.classLevel) || targetRoomsArr.includes(s.room);
+                            
+                            if (!isInTargetRoom && targetRoomsArr.length > 0) return false;
+
+                            return subjectRegis.some(r => isMatchId(r.studentId, s.code));
+                        });
+                    } else {
+                        // หากไม่มีการลงทะเบียน ให้ดึงเด็กจากห้องปกติมาแสดง (Fallback)
+                        matchedStudents = (students || []).filter(s => {
+                            const sRoom = normalizeRoomStr(`${s.classLevel || ''}/${s.room || ''}`);
+                            return sRoom === cleanTargetRoom || (s.classLevel === cLevel && s.room === cRoom);
+                        });
+                    }
+
+                    if (matchedStudents.length === 0 && records.length > 0) {
+                        const findIdField = (rec) => {
+                            for (let k in rec) {
+                                if (k==='id'||k==='date'||k==='period') continue;
+                                const v = String(rec[k]).trim();
+                                if (!isNaN(v) && v.length >= 4) return k;
+                            }
+                            return 'studentId';
+                        };
+                        const idField = findIdField(records[0]);
+                        
+                        const uniqueStudentIds = [...new Set(records.map(r => String(r[idField]).trim()))];
+                        matchedStudents = uniqueStudentIds.map(id => {
+                            const rec = records.find(r => String(r[idField]).trim() === id);
+                            let nameField = 'name';
+                            for (let k in rec) {
+                                if (k==='id'||k==='date'||k==='period'||k===idField) continue;
+                                const v = String(rec[k]).trim();
+                                if (v.length > 5 && isNaN(v) && !['มา', 'สาย', 'ขาด', 'ลาป่วย', 'ลากิจ', 'ไปกิจกรรม', 'หนีเรียน'].includes(v)) {
+                                    nameField = k; break;
+                                }
+                            }
+                            return { code: id, name: rec[nameField] || 'ไม่มีชื่อ', classLevel: cLevel, room: cRoom };
+                        });
                     }
 
                     if (matchedStudents.length === 0 && records.length > 0) {
@@ -12006,27 +12832,52 @@
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {attReportData.length > 0 ? attReportData.map((s, i) => (
-                                                <tr key={s.code} className="hover:bg-blue-50 transition border-b border-gray-200">
-                                                    <td className="p-2 border border-gray-300 text-center text-gray-500">{i+1}</td>
-                                                    <td className="p-2 border border-gray-300 text-center">{s.code}</td>
-                                                    <td className="p-2 border border-gray-300 text-left font-medium">{s.name}</td>
-                                                    {attUniqueDates.map((dateStr, idx) => {
-                                                        const status = s.attendance[dateStr] || '';
-                                                        const isRed = ['ข', 'น'].includes(status);
-                                                        const isGreen = ['✓'].includes(status);
-                                                        const isOrange = ['ส'].includes(status);
-                                                        return (
-                                                            <td key={idx} className={`p-2 border border-gray-300 text-center font-bold ${isRed ? 'text-red-500' : isGreen ? 'text-green-600' : isOrange ? 'text-orange-500' : 'text-blue-500'}`}>
-                                                                {status}
-                                                            </td>
-                                                        );
-                                                    })}
-                                                    <td className="p-2 border border-gray-300 text-center font-bold text-ns-blue bg-blue-50 print:bg-transparent">
-                                                        {s.percent}%
-                                                    </td>
-                                                </tr>
-                                            )) : (
+                                            {attReportData.length > 0 ? (() => {
+                                                const groupedStudents = {};
+                                                
+                                                // จัดกลุ่มนักเรียนสำหรับหน้ารายงาน
+                                                attReportData.forEach(s => {
+                                                    const roomKey = `${s.classLevel || ''}/${s.room || ''}`;
+                                                    if (!groupedStudents[roomKey]) groupedStudents[roomKey] = [];
+                                                    groupedStudents[roomKey].push(s);
+                                                });
+                                                
+                                                const sortedRooms = Object.keys(groupedStudents).sort((a, b) => a.localeCompare(b, 'th', { numeric: true }));
+                                                const hasMultipleRooms = sortedRooms.length > 1;
+
+                                                return sortedRooms.map(roomKey => (
+                                                    <React.Fragment key={roomKey}>
+                                                        {hasMultipleRooms && (
+                                                            <tr className="bg-indigo-50 border-b border-indigo-200">
+                                                                <td colSpan={4 + attUniqueDates.length} className="p-2 font-bold text-indigo-800 text-left">
+                                                                    <i className="fa-solid fa-users-rectangle mr-2"></i> ชั้น/ห้อง: {roomKey} <span className="text-gray-500 font-normal ml-2">({groupedStudents[roomKey].length} คน)</span>
+                                                                </td>
+                                                            </tr>
+                                                        )}
+                                                        {groupedStudents[roomKey].map((s, i) => (
+                                                            <tr key={s.code} className="hover:bg-blue-50 transition border-b border-gray-200">
+                                                                <td className="p-2 border border-gray-300 text-center text-gray-500">{i+1}</td>
+                                                                <td className="p-2 border border-gray-300 text-center">{s.code}</td>
+                                                                <td className="p-2 border border-gray-300 text-left font-medium">{s.name}</td>
+                                                                {attUniqueDates.map((dateStr, idx) => {
+                                                                    const status = s.attendance[dateStr] || '';
+                                                                    const isRed = ['ข', 'น'].includes(status);
+                                                                    const isGreen = ['✓'].includes(status);
+                                                                    const isOrange = ['ส'].includes(status);
+                                                                    return (
+                                                                        <td key={idx} className={`p-2 border border-gray-300 text-center font-bold ${isRed ? 'text-red-500' : isGreen ? 'text-green-600' : isOrange ? 'text-orange-500' : 'text-blue-500'}`}>
+                                                                            {status}
+                                                                        </td>
+                                                                    );
+                                                                })}
+                                                                <td className="p-2 border border-gray-300 text-center font-bold text-ns-blue bg-blue-50 print:bg-transparent">
+                                                                    {s.percent}%
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </React.Fragment>
+                                                ));
+                                            })() : (
                                                 <tr>
                                                     <td colSpan={4 + attUniqueDates.length} className="p-8 text-center text-gray-400">
                                                         {attSelectedKey ? (isFetchingAtt ? 'กำลังดึงข้อมูล...' : 'ไม่พบข้อมูลการเช็คชื่อสำหรับวิชานี้') : 'กรุณาเลือกรายวิชาเพื่อดูรายงาน'}
@@ -12663,9 +13514,9 @@
                 setFormData(prev => ({ ...prev, clubCode: nextCode }));
             };
 
-            const standardDepts = ['วิทยาศาสตร์และเทคโนโลยี', 'คณิตศาสตร์', 'ภาษาไทย', 'ภาษาต่างประเทศ', 'สังคมศึกษา ศาสนาและวัฒนธรรม', 'การงานอาชีพ', 'สุขศึกษาและพลศึกษา', 'ศิลปะ'];
-            const departments = [...new Set([...standardDepts, ...(teachers || []).map(t => t.department).filter(Boolean)])].sort();
-            const filteredTeachers = (teachers || []).filter(t => selectedDept ? t.department === selectedDept : true).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+            const standardDepts = ['วิทยาศาสตร์และเทคโนโลยี', 'คณิตศาสตร์', 'ภาษาไทย', 'ภาษาต่างประเทศ', 'สังคมศึกษา ศาสนาและวัฒนธรรม', 'การงานอาชีพ', 'สุขศึกษาและพลศึกษา', 'ศิลปะ', 'แนะแนว'];
+            const departments = [...new Set([...standardDepts, ...(teachers || []).map(t => String(t.department || '').trim()).filter(Boolean)])].sort();
+            const filteredTeachers = (teachers || []).filter(t => selectedDept ? String(t.department || '').trim() === String(selectedDept).trim() : true).sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
             const toggleTeacher = (tName) => {
                 if (selectedTeachers.includes(tName)) {
@@ -13301,7 +14152,27 @@
 
         // --- Main Application ---
         const App = () => {
-            const [isInitialLoading, setIsInitialLoading] = useState(true); // 💡 เพิ่มบรรทัดนี้กลับเข้ามาเพื่อควบคุมหน้า Loading
+            // 👇 สร้างตัวแปรสำหรับเปิด/ปิดหน้าจอโหลดตอนเริ่มต้น
+            const [isInitialLoading, setIsInitialLoading] = useState(true);
+            
+            // 👇 ฟังก์ชันเปิดหน้าเว็บแบบ Fast Load (ปลดล็อคหน้า Login ทันที)
+            useEffect(() => {
+                const loader = document.getElementById('nsc-fast-loader');
+                if (loader) {
+                    setTimeout(() => {
+                        loader.style.opacity = '0';
+                        setTimeout(() => loader.remove(), 500); 
+                    }, 300); 
+                }
+
+                // 🚀 หัวใจสำคัญ: สั่งปิดวงแหวน Loading ทันทีใน 0.5 วินาที
+                // เพื่อปลดล็อคให้หน้า Login โชว์ขึ้นมาให้ครูพิมพ์รหัสผ่านได้เลย 
+                // ส่วนข้อมูลนักเรียนและรูปภาพนับพัน จะถูกสูบอยู่เบื้องหลังเงียบๆ (Background Fetch)
+                setTimeout(() => {
+                    setIsInitialLoading(false);
+                }, 500);
+            }, []);
+
             const defaultLogo = "https://upload.wikimedia.org/wikipedia/th/a/a2/Narasikkhalai_School_Logo.png";
             const [schoolConfig, setSchoolConfig] = useState(() => {
                 const saved = localStorage.getItem('ns_school_config');
@@ -13742,12 +14613,33 @@
                     }
 
                     let loadedStudents = [];
-                    if (directSheetStudentsRes.status === 'fulfilled' && directSheetStudentsRes.value && directSheetStudentsRes.value.length > 0) {
+                    // 👇 สลับความสำคัญ: ดึงข้อมูลสดจากระบบหลังบ้าน (GAS) เป็นหลัก เพื่อทำลายปัญหาแคชค้าง ห้องมาไม่ครบ 👇
+                    if (studentsRes.status === 'fulfilled' && studentsRes.value && studentsRes.value.status === 'success' && studentsRes.value.data && studentsRes.value.data.length > 0) {
+                        loadedStudents = studentsRes.value.data;
+                    } else if (directSheetStudentsRes.status === 'fulfilled' && directSheetStudentsRes.value && directSheetStudentsRes.value.length > 0) {
                         loadedStudents = directSheetStudentsRes.value;
-                    } else if (studentsRes.status === 'fulfilled' && studentsRes.value && studentsRes.value.status === 'success') {
-                        loadedStudents = studentsRes.value.data || [];
                     }
-                    setGlobalStudents(loadedStudents);
+                    
+                    // 💡 ระบบทำความสะอาดข้อมูลชั้นและห้อง ป้องกันปัญหาครูพิมพ์เว้นวรรคผิด, ใส่เลข 0 นำหน้า หรือลืมพิมพ์คำว่า ม.
+                    const cleanLoadedStudents = loadedStudents.map(s => {
+                        let cLevel = s.classLevel ? String(s.classLevel).trim().replace(/\s/g, '') : '';
+                        if (cLevel) {
+                            if (!cLevel.startsWith('ม.') && !isNaN(cLevel.replace(/\D/g, ''))) {
+                                cLevel = `ม.${cLevel.replace(/\D/g, '')}`;
+                            } else if (cLevel.startsWith('ม') && !cLevel.startsWith('ม.')) {
+                                cLevel = `ม.${cLevel.replace(/\D/g, '')}`;
+                            }
+                        }
+                        
+                        let cRoom = s.room ? String(s.room).trim().replace(/\s/g, '') : '';
+                        if (cRoom && !isNaN(cRoom)) {
+                            cRoom = Number(cRoom).toString(); // แปลง 08 เป็น 8 ป้องกันการแยกห้องผิด
+                        }
+                        
+                        return { ...s, classLevel: cLevel, room: cRoom };
+                    });
+
+                    setGlobalStudents(cleanLoadedStudents);
 
                     if (provRes.status === 'fulfilled' && provRes.value && provRes.value.status === 'success') {
                         setGlobalProvinces(provRes.value.data || []);
@@ -13777,7 +14669,7 @@
                     console.error("Background sync failed:", error);
                 }
                 setIsSyncing(false);
-                setIsInitialLoading(false); // 💡 สั่งปิดหน้า Loading เมื่อดึงข้อมูลเสร็จทั้งหมดแล้ว
+                // 💡 หน้า Loading ถูกสั่งปิดไปให้แสดงหน้า Login ทันทีตั้งแต่เริ่มเว็บแล้ว ข้อมูลจะโหลดเงียบๆ เบื้องหลัง
             };
 
             useEffect(() => {
@@ -14079,7 +14971,11 @@
                                         </div>
                                     )}
                                     <h2 className="text-2xl md:text-3xl font-bold text-ns-blue mb-2">ยินดีต้อนรับสู่ระบบ NS Student Care (NSC) {schoolConfig.name || 'NS Student Care (NSC)'}</h2>
-                                    <p className="text-gray-600 mb-4">สวัสดีคุณ <span className="font-bold">{user.name}</span> ({user.role === 'admin' ? 'ผู้ดูแลระบบ' : user.role === 'executive' ? 'ผู้บริหาร' : user.role === 'dept_admin' ? 'แอดมินกลุ่มสาระ' : 'ผู้ใช้ทั่วไป'})</p>
+                                    
+                                    {/* 👇 นำบรรทัดนี้ไปวางทับบรรทัดเดิม 👇 */}
+                                    <p className="text-gray-600 mb-4">สวัสดีคุณ <span className="font-bold">{user.name}</span> ({user.role === 'admin' ? 'ผู้ดูแลระบบ' : user.role === 'executive' ? 'ผู้บริหาร' : user.role === 'dept_admin' ? 'แอดมินกลุ่มสาระ' : user.role === 'administrative' ? 'ครูฝ่ายปกครอง' : 'ผู้ใช้ทั่วไป'})</p>
+                                    {/* 👆 ---------------------- 👆 */}
+
                                     <button 
                                         onClick={() => { setChangePwdData({ newUsername: user.username || '', newPassword: '' }); setShowChangePwdModal(true); }} 
                                         className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-bold transition shadow-sm inline-flex items-center"
@@ -14197,11 +15093,14 @@
                                     <h1 className="text-2xl font-bold text-gray-800">
                                         {(menus.find(m => m.id === currentView) || {}).label || 'หน้าแรก'}
                                     </h1>
-                                    <div className="hidden md:block">
+                                    <div className="hidden md:flex gap-3 items-center">
                                         {isSyncing ? (
-                                            <span className="text-sm text-gray-500 animate-pulse"><i className="fa-solid fa-sync fa-spin mr-2"></i>กำลังซิงค์ข้อมูลกับฐานข้อมูล...</span>
+                                            <span className="text-sm text-gray-500 animate-pulse"><i className="fa-solid fa-sync fa-spin mr-2"></i>กำลังซิงค์ข้อมูล...</span>
                                         ) : (
-                                            <button onClick={syncGlobalData} className="text-sm text-gray-400 hover:text-ns-blue transition"><i className="fa-solid fa-rotate-right mr-1"></i>อัปเดตข้อมูล</button>
+                                            <React.Fragment>
+                                                <button onClick={syncGlobalData} className="text-sm bg-blue-50 text-ns-blue hover:bg-blue-100 px-4 py-2 rounded-lg font-bold transition shadow-sm border border-blue-200"><i className="fa-solid fa-rotate-right mr-1"></i>อัปเดตข้อมูล</button>
+                                                <button onClick={() => { sessionStorage.clear(); window.location.reload(); }} className="text-sm bg-red-50 text-red-600 hover:bg-red-100 px-4 py-2 rounded-lg font-bold transition shadow-sm border border-red-200" title="กดเมื่อข้อมูลไม่ยอมอัปเดต"><i className="fa-solid fa-broom mr-1"></i>ล้างแคช</button>
+                                            </React.Fragment>
                                         )}
                                     </div>
                                 </div>
