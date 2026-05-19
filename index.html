@@ -241,6 +241,21 @@
             return { isOutMode, isLate };
         };
 
+        // --- Component นาฬิกาแยกส่วน (ป้องกันการ Re-render หน้าเว็บหลัก) ---
+        const RealtimeClock = () => {
+            const [timeStr, setTimeStr] = React.useState("");
+            React.useEffect(() => {
+                const updateTime = () => {
+                    const now = new Date();
+                    setTimeStr(`${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`);
+                };
+                updateTime();
+                const timer = setInterval(updateTime, 1000);
+                return () => clearInterval(timer);
+            }, []);
+            return <span>{timeStr}</span>;
+        };
+
         // --- Components ย่อย ---
         
         // 1. หน้าเข้าสู่ระบบ
@@ -400,7 +415,7 @@
             );
         };
 
-        // 2. หน้าสแกนเวลาเข้า-ออก
+       // 2. หน้าสแกนเวลาเข้า-ออก
         const ScannerPopup = ({ onClose, timeSettings, onRecordSaved, records, currentGps, studentList, schoolConfig, behaviorsSetting, behaviorRecords, setBehaviorRecords, user, exemptions }) => {
             const [status, setStatus] = useState("กำลังเตรียมกล้อง...");
             const [scanResult, setScanResult] = useState(null);
@@ -411,13 +426,6 @@
             // --- เพิ่ม State สำหรับกรอกรหัสด้วยมือ ---
             const [manualInput, setManualInput] = useState('');
             const [previewStudent, setPreviewStudent] = useState(null);
-            
-            const [now, setNow] = useState(new Date());
-
-            useEffect(() => {
-                const timer = setInterval(() => setNow(new Date()), 1000);
-                return () => clearInterval(timer);
-            }, []);
 
             useEffect(() => {
                 const elem = document.documentElement;
@@ -453,15 +461,15 @@
             useEffect(() => { latestTimeSettings.current = timeSettings; }, [timeSettings]);
             useEffect(() => { latestBehaviors.current = behaviorsSetting || []; }, [behaviorsSetting]);
 
-            const currentHour = now.getHours();
-            const currentMin = now.getMinutes();
-            const currentSec = now.getSeconds();
+            // คำนวณค่าเริ่มต้นแค่ครั้งเดียวตอนโหลด
+            const initialDate = new Date();
+            const currentHour = initialDate.getHours();
+            const currentMin = initialDate.getMinutes();
             const timeStr = `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}`;
-            const timeStrWithSec = `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}:${String(currentSec).padStart(2, '0')}`;
             
-            const day = String(now.getDate()).padStart(2, '0');
-            const month = String(now.getMonth() + 1).padStart(2, '0');
-            const year = now.getFullYear() + 543;
+            const day = String(initialDate.getDate()).padStart(2, '0');
+            const month = String(initialDate.getMonth() + 1).padStart(2, '0');
+            const year = initialDate.getFullYear() + 543;
             const dateStr = `${day}/${month}/${year}`;
             
             const { isOutMode, isLate } = determineModeAndLate(timeStr, timeSettings.startIn, timeSettings.lateTime, timeSettings.startOut);
@@ -471,21 +479,7 @@
             const processScanData = async (decodedText) => {
                 if (isProcessingRef.current) return; 
                 
-                let isGpsValid = false;
-                if (currentGps) {
-                    const dist = getDistanceFromLatLonInM(
-                        currentGps.lat, currentGps.lng,
-                        parseFloat(latestTimeSettings.current.gpsLat), parseFloat(latestTimeSettings.current.gpsLng)
-                    );
-                    if (dist <= 200) {
-                        isGpsValid = true;
-                    }
-                }
-
-                if(!isGpsValid) {
-                    alert("ไม่สามารถบันทึกได้ เนื่องจากคุณอยู่นอกพื้นที่โรงเรียน");
-                    return;
-                }
+                // 💡 ยกเลิกระบบตรวจสอบ GPS ตรงนี้ (สแกนได้ทันทีโดยไม่ต้องเช็คระยะห่าง)
 
                 isProcessingRef.current = true;
                 setStatus("กำลังตรวจสอบข้อมูล...");
@@ -660,7 +654,7 @@
                 }
             };
 
-            // 👇 แก้ไขปรับปรุงระบบการเรียกกล้องให้รองรับ Android ทุกรุ่น
+            // 👇 แก้ไขปรับปรุงระบบการเรียกกล้องให้กระตุ้นการขออนุญาต (Permission) อัตโนมัติ
             useEffect(() => {
                 let scanner = null;
                 let isUnmounted = false;
@@ -668,6 +662,28 @@
                 const initCamera = async () => {
                     if (isUnmounted) return;
                     
+                    // 1. กระตุ้นให้เบราว์เซอร์เด้งหน้าต่าง "ขออนุญาตใช้กล้อง"
+                    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                        try {
+                            setStatus("กำลังขออนุญาตใช้กล้อง...");
+                            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).catch(async () => {
+                                // ถ้าขอกล้องหลังไม่ได้ ให้ขอกล้องอะไรก็ได้เพื่อกระตุ้น Permission
+                                return await navigator.mediaDevices.getUserMedia({ video: true });
+                            });
+                            // เมื่อได้สิทธิ์แล้ว ปิดสตรีมไปก่อนเพื่อส่งต่อให้ Html5Qrcode จัดการ
+                            if (stream) {
+                                stream.getTracks().forEach(track => track.stop());
+                            }
+                        } catch (permErr) {
+                            console.error("Camera Permission Error:", permErr);
+                            setStatus("กรุณาอนุญาตการเข้าถึงกล้องในเบราว์เซอร์ (Settings > Site Settings)");
+                            return; // หยุดการทำงานถ้าผู้ใช้ไม่อนุญาต
+                        }
+                    } else {
+                        setStatus("เบราว์เซอร์ไม่รองรับ หรือไม่ได้ใช้งานผ่าน HTTPS");
+                        return;
+                    }
+
                     try {
                         scanner = new window.Html5Qrcode("reader");
                         
@@ -684,19 +700,8 @@
                             aspectRatio: 1.0 // บังคับสัดส่วนวิดีโอให้เป็นสี่เหลี่ยมจัตุรัสเพื่อให้พอดีกับ UI
                         };
                         
-                        if (currentGps) {
-                            const dist = getDistanceFromLatLonInM(
-                                currentGps.lat, currentGps.lng,
-                                parseFloat(latestTimeSettings.current.gpsLat), parseFloat(latestTimeSettings.current.gpsLng)
-                            );
-                            if (dist <= 200) {
-                                setStatus("พร้อมสแกนคิวอาร์โค้ด");
-                            } else {
-                                setStatus(`คุณอยู่นอกพื้นที่โรงเรียน (ระยะห่าง ${Math.round(dist)} เมตร)`);
-                            }
-                        } else {
-                            setStatus("พร้อมสแกนคิวอาร์โค้ด");
-                        }
+                        // 💡 ยกเลิกระบบตรวจสอบ GPS ปรับสถานะพร้อมสแกนทันที
+                        setStatus("พร้อมสแกนคิวอาร์โค้ด");
 
                         try {
                             // ลองเปิดกล้องหลังก่อน
@@ -705,14 +710,16 @@
                                 (err) => {}
                             );
                         } catch (envError) {
-                            console.warn("ไม่สามารถดึงกล้องหลังได้ กำลังสลับไปใช้กล้องสำรอง...", envError);
+                            console.warn("ไม่สามารถดึงกล้องหลังได้โดยตรง กำลังสลับไปค้นหารายชื่อกล้อง...", envError);
                             if (isUnmounted) return;
                             
-                            // ระบบสำรอง: หากเปิดกล้องหลังไม่ได้ ให้ดึงกล้องตัวใดก็ได้มาแทน (แก้บัคใน Android หลายรุ่น)
+                            // ระบบสำรอง: ค้นหากล้องทั้งหมดในเครื่อง
                             try {
                                 const devices = await window.Html5Qrcode.getCameras();
                                 if (devices && devices.length > 0) {
-                                    await scanner.start(devices[0].id, config, 
+                                    // สำหรับ Android มักจะเจอกล้องหลังเป็นตัวที่อยู่ท้ายสุดของ Array (เลนส์หลัก)
+                                    const backCameraId = devices.length > 1 ? devices[devices.length - 1].id : devices[0].id;
+                                    await scanner.start(backCameraId, config, 
                                         (decodedText) => processScanData(decodedText),
                                         (err) => {}
                                     );
@@ -720,7 +727,7 @@
                                     throw new Error("ไม่พบอุปกรณ์กล้อง");
                                 }
                             } catch (fallbackError) {
-                                setStatus("ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตสิทธิ์กล้องในเบราว์เซอร์");
+                                setStatus("ไม่สามารถเปิดกล้องได้ กรุณารีเฟรชเบราว์เซอร์");
                             }
                         }
                     } catch (error) {
@@ -777,7 +784,7 @@
 
                     <div className="bg-gray-800 text-center py-4 shadow-inner">
                         <div className="text-4xl md:text-6xl font-bold text-ns-yellow tracking-wider font-mono">
-                            {timeStrWithSec}
+                            <RealtimeClock />
                         </div>
                         <div className="text-gray-300 mt-1">{dateStr} | {modeName}</div>
                     </div>
@@ -884,7 +891,7 @@
                 </div>
             );
         };
-
+        
         // 3. หน้าเวลาเข้า-ออกโรงเรียน (TimeView)
         const TimeView = ({ timeSettings, records, setRecords, forgotCardRecords, setForgotCardRecords, isSyncing, studentList, schoolConfig, behaviorsSetting, behaviorRecords, setBehaviorRecords, user, exemptions }) => {
             const [showScanner, setShowScanner] = useState(false);
@@ -903,9 +910,10 @@
             const [isProcessingManual, setIsProcessingManual] = useState(false);
             const [duplicateError, setDuplicateError] = useState(null);
 
-            const uniqueClasses = [...new Set(studentList.map(s => s.classLevel).filter(Boolean))].sort();
-            const uniqueRooms = [...new Set(studentList.filter(s => s.classLevel === selectedClass).map(s => s.room).filter(Boolean))].sort((a,b) => Number(a) - Number(b));
-            const classStudents = studentList.filter(s => s.classLevel === selectedClass && s.room === selectedRoom);
+            // ใช้ useMemo ป้องกันการคำนวณซ้ำทุกครั้งที่พิมพ์
+            const uniqueClasses = React.useMemo(() => [...new Set(studentList.map(s => s.classLevel).filter(Boolean))].sort(), [studentList]);
+            const uniqueRooms = React.useMemo(() => [...new Set(studentList.filter(s => s.classLevel === selectedClass).map(s => s.room).filter(Boolean))].sort((a,b) => Number(a) - Number(b)), [studentList, selectedClass]);
+            const classStudents = React.useMemo(() => studentList.filter(s => s.classLevel === selectedClass && s.room === selectedRoom), [studentList, selectedClass, selectedRoom]);
 
             const forgotCardCount = selectedStudentForManual ? 
                 (forgotCardRecords || []).filter(r => String(r.studentId).trim() === String(selectedStudentForManual.code).trim()).length + 1 
@@ -1048,11 +1056,11 @@
                 const finalStatusStr = isExempted ? "ยกเว้นสาย" : (scanIsLate ? "สาย" : "ปกติ");
 
                 // 👇 ใช้ formatDisplayDate ครอบ r.date ป้องกันบัควันที่ผิดรูปแบบข้ามเซสชัน 👇
-                const isDuplicate = records.some(r => 
-                    String(r.studentId).trim() === String(studentToSave.code).trim() && 
-                    formatDisplayDate(r.date) === scanDateStr && 
-                    r.type === currentType
-                );
+                // 💡 การปรับปรุงประสิทธิภาพ: กรองเงื่อนไขที่เบากว่าก่อน ค่อย format วันที่ ช่วยลดอาการค้างตอนกดบันทึก
+                const isDuplicate = records.some(r => {
+                    if (String(r.studentId).trim() !== String(studentToSave.code).trim() || r.type !== currentType) return false;
+                    return formatDisplayDate(r.date) === scanDateStr;
+                });
                 // 👆 ------------------------------------------------------------- 👆
 
                 if (isDuplicate) {
@@ -7049,14 +7057,6 @@
                 return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
             });
             
-            // State สำหรับนาฬิกาดิจิตอล
-            const [now, setNow] = useState(new Date());
-            useEffect(() => {
-                const timer = setInterval(() => setNow(new Date()), 1000);
-                return () => clearInterval(timer);
-            }, []);
-            const timeStrWithSec = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-
             const [currentPeriod, setCurrentPeriod] = useState('');
             const [teacherSchedules, setTeacherSchedules] = useState([]);
             const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
@@ -7527,7 +7527,35 @@
                     }
 
                     const dayName = getDayNameTH(currentDate);
-                    let matchedSchedule = teacherSchedules.find(s => s.day === dayName && s.period === currentPeriod);
+                    
+                    // 💡 แก้ไข: ดึงตารางสอน "ทั้งหมด" ที่ตรงกับวันและคาบนี้ (รองรับสอนหลายวิชา/หลายห้องในคาบเดียว)
+                    const schedulesInPeriod = teacherSchedules.filter(s => s.day === dayName && s.period === currentPeriod);
+                    let matchedSchedule = null;
+
+                    if (schedulesInPeriod.length > 0) {
+                        // นำข้อมูลมารวมกันคั่นด้วยลูกน้ำ
+                        const uniqueSubCodes = [...new Set(schedulesInPeriod.map(s => String(s.subjectCode).trim()).filter(Boolean))].join(', ');
+                        const uniqueSubNames = [...new Set(schedulesInPeriod.map(s => String(s.subjectName).trim()).filter(Boolean))].join(', ');
+                        
+                        const allRooms = [];
+                        schedulesInPeriod.forEach(s => {
+                            if (s.room) {
+                                String(s.room).split(',').forEach(r => allRooms.push(r.trim()));
+                            }
+                        });
+                        const uniqueRooms = [...new Set(allRooms.filter(Boolean))].join(', ');
+
+                        // สร้าง Schedule รวมเพื่อนำไปแสดงผลบน Header และใช้ค้นหาข้อมูลต่อ
+                        matchedSchedule = {
+                            day: dayName,
+                            period: currentPeriod,
+                            subjectCode: uniqueSubCodes,
+                            subjectName: uniqueSubNames,
+                            teacherName: schedulesInPeriod[0].teacherName,
+                            room: uniqueRooms,
+                            _originalSchedules: schedulesInPeriod // เก็บข้อมูลต้นฉบับไว้เทียบรหัสวิชา
+                        };
+                    }
 
                     if (isPeriodZero && !matchedSchedule) {
                         const currentTeacher = (teachers || []).find(t => normalizeName(t.name) === normalizeName(user && user.name ? user.name : ''));
@@ -7551,7 +7579,8 @@
                             subjectCode: hrSubjectCode, 
                             subjectName: 'กิจกรรมหน้าเสาธง/โฮมรูม',
                             teacherName: user && user.name ? user.name : '',
-                            room: advRoomStr
+                            room: advRoomStr,
+                            _originalSchedules: []
                         };
                     }
 
@@ -7559,10 +7588,15 @@
                         setActiveSubject(matchedSchedule);
                         setScannedStudents([]); 
                         
+                        // ใช้รหัสวิชาของวิชาแรกในการหาคาบต่อเนื่อง เพื่อไม่ให้สับสนกรณีสอนหลายวิชา
+                        const primaryCode = matchedSchedule._originalSchedules && matchedSchedule._originalSchedules.length > 0 
+                            ? matchedSchedule._originalSchedules[0].subjectCode 
+                            : matchedSchedule.subjectCode;
+
                         const sameSubjectSchedules = teacherSchedules.filter(s => 
                             s.day === dayName && 
-                            s.subjectCode === matchedSchedule.subjectCode && 
-                            s.room === matchedSchedule.room
+                            s.subjectCode === primaryCode && 
+                            (matchedSchedule.room.includes(s.room) || s.room === matchedSchedule.room)
                         );
                         
                         const periodOrder = (periodSettings || []).map(p => String(p.period));
@@ -7606,19 +7640,28 @@
                                 const tRooms = String(currentTeacher.room).split(',').map(r => r.trim()).filter(Boolean);
                                 matchedStudents = (students || []).filter(s => {
                                     return String(s.classLevel).trim() === tClass && tRooms.includes(String(s.room).trim());
-                                }).sort((a,b) => Number(a.code) - Number(b.code));
+                                }).reverse(); 
                             } else {
                                 matchedStudents = [];
                             }
                         } else {
-                            //แยกลูกน้ำ เพื่อดึงเด็กจากห้องที่ถูกรวมมาทั้งหมด
+                            // แยกลูกน้ำ เพื่อดึงเด็กจากห้องที่ถูกรวมมาทั้งหมด
                             const scheduleRooms = String(matchedSchedule.room).split(',').map(r => r.trim()).filter(Boolean);
                             
+                            // 💡 ดึงรหัสวิชาทั้งหมดที่สอนในคาบนี้
+                            const scheduleCodes = matchedSchedule._originalSchedules && matchedSchedule._originalSchedules.length > 0
+                                ? matchedSchedule._originalSchedules.map(s => String(s.subjectCode).trim()).filter(Boolean)
+                                : String(matchedSchedule.subjectCode).split(',').map(c => c.trim()).filter(Boolean);
+                            
                             const subjectRegis = (registrations || []).filter(r => {
-                                const isSubjectMatch = String(r.subjectCode).trim() === String(matchedSchedule.subjectCode).trim();
+                                const rCode = String(r.subjectCode).trim();
                                 const rRooms = String(r.room).split(',').map(x => x.trim()).filter(Boolean);
+                                
+                                // เช็คว่าวิชาตรงกับ 1 ในวิชาที่สอนในคาบนี้หรือไม่
+                                const isSubjectMatch = scheduleCodes.includes(rCode);
                                 // เช็คว่ามีห้องที่ตรงกันหรือไม่
-                                const isRoomMatch = scheduleRooms.some(sr => rRooms.includes(sr)) || String(r.room).trim() === String(matchedSchedule.room).trim();
+                                const isRoomMatch = scheduleRooms.some(sr => rRooms.includes(sr)) || scheduleRooms.includes(String(r.room).trim());
+                                
                                 return isSubjectMatch && isRoomMatch;
                             });
                             
@@ -7632,7 +7675,7 @@
 
                                 // ตรวจสอบขั้นสุดท้ายว่าเด็กคนนี้อยู่ในกลุ่มที่ลงทะเบียนไว้หรือไม่
                                 return subjectRegis.some(r => String(r.studentId).trim() === String(s.code).trim());
-                            }).sort((a,b) => Number(a.code) - Number(b.code));
+                            }).reverse(); 
                         }
                         
                         setTargetStudents(matchedStudents);
@@ -8021,15 +8064,47 @@
                     const attRes = await callGAS('getAttendanceRecord', {
                         targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48', date: targetDateTH, room: 'ALL', subjectCode: 'ALL'
                     });
-                    const actualRecords = (attRes && attRes.status === 'success') ? (attRes.data || []) : [];
+                    const actualRecordsRaw = (attRes && attRes.status === 'success') ? (attRes.data || []) : [];
                     
+                    // 💡 แปลงข้อมูล JSON ที่อาจจะฝังอยู่ใน status เพื่อให้สรุปคาบเรียนได้ถูกต้อง
+                    const actualRecords = [];
+                    actualRecordsRaw.forEach(r => {
+                        let isJsonStr = false;
+                        if (r.status && typeof r.status === 'string' && r.status.includes('{')) {
+                            try {
+                                const dailyObj = JSON.parse(r.status);
+                                if (typeof dailyObj === 'object' && dailyObj !== null) {
+                                    isJsonStr = true;
+                                    for (const k in dailyObj) {
+                                        const match = k.match(/^(.*?) \(คาบ (.*)\)$/);
+                                        if (match) {
+                                            actualRecords.push({ ...r, date: match[1], period: match[2], status: dailyObj[k] });
+                                        }
+                                    }
+                                }
+                            } catch(e) {}
+                        }
+                        if (!isJsonStr && r.date) {
+                            actualRecords.push(r);
+                        }
+                    });
+
                     const checkedSet = new Set();
                     actualRecords.forEach(r => {
-                        const cRoom = String(r.room || '').replace(/[\sม\.]/g, '');
-                        const cSub = String(r.subjectCode || '').replace(/[^ก-๙a-zA-Z0-9]/g, '').toUpperCase();
+                        // 💡 แก้ไข: ใช้ ชื่อวิชา (subjectName) และห้อง (room) เป็นหลักในการตรวจสอบ
+                        let rRooms = String(r.room || '').split(',').map(x => x.replace(/[\sม\.]/g, '').trim()).filter(Boolean);
+                        let rSubs = String(r.subjectName || '').split(',').map(x => x.replace(/[^ก-๙a-zA-Z0-9]/g, '').toUpperCase().trim()).filter(Boolean);
                         const cPer = String(r.period || '').trim();
-                        checkedSet.add(`${cSub}_${cRoom}_${cPer}`);
-                        checkedSet.add(`${cSub}_${cRoom}`); 
+                        
+                        if (rSubs.length === 0) rSubs = ['NOSUBJECT'];
+                        if (rRooms.length === 0) rRooms = ['NOROOM'];
+
+                        rSubs.forEach(cSub => {
+                            rRooms.forEach(cRoom => {
+                                checkedSet.add(`${cSub}_${cRoom}_${cPer}`);
+                                checkedSet.add(`${cSub}_${cRoom}`); 
+                            });
+                        });
                     });
 
                     const checkedClasses = [];
@@ -8038,8 +8113,13 @@
                     const homeroomSchedules = [];
                     (teachers || []).forEach(t => {
                         if (t.classLevel && t.room) {
+                            let hrSubjectCode = 'HR000';
+                            const levelMatch = String(t.classLevel).match(/ม\.(\d+)/);
+                            if (levelMatch) {
+                                hrSubjectCode = `HR00${levelMatch[1]}`;
+                            }
                             homeroomSchedules.push({
-                                day: dayNameTH, period: '0', subjectCode: 'HR000', subjectName: 'กิจกรรมหน้าเสาธง/โฮมรูม',
+                                day: dayNameTH, period: '0', subjectCode: hrSubjectCode, subjectName: 'กิจกรรมหน้าเสาธง/โฮมรูม',
                                 teacherName: t.name, room: `${t.classLevel}/${t.room}`, type: 'โฮมรูม', program: '-', location: '-'
                             });
                         }
@@ -8051,9 +8131,12 @@
                         const parsed = parseScheduleRow(row);
                         
                         // กรองข้อมูลตามประเภทรายงานที่เลือก (รายวิชา หรือ คาบ 0)
-                        const sSubCheck = String(parsed.subjectCode || '').replace(/[^ก-๙a-zA-Z0-9]/g, '').toUpperCase();
+                        const sSubCheckRaw = String(parsed.subjectName || '');
+                        const sSubCheck = sSubCheckRaw.replace(/[^ก-๙a-zA-Z0-9]/g, '').toUpperCase();
                         const sPerCheck = String(parsed.period || '').trim();
-                        const isHomeroom = sSubCheck === 'HR000' || sPerCheck === '0' || sPerCheck === 'คาบ 0' || sPerCheck === 'โฮมรูม';
+                        
+                        // 💡 แก้ไข: เช็คโฮมรูมจากชื่อวิชาหรือคาบเรียน
+                        const isHomeroom = sSubCheck.includes('โฮมรูม') || sSubCheck.includes('หน้าเสาธง') || sPerCheck === '0' || sPerCheck === 'คาบ 0' || sPerCheck === 'โฮมรูม';
                         
                         if (reportDataType === 'homeroom' && !isHomeroom) return;
                         if (reportDataType === 'subject' && isHomeroom) return;
@@ -8068,15 +8151,23 @@
                             
                             const clsData = { ...parsed, department: dept, teacherNorm: tNameNorm };
 
-                            const sRoom = String(parsed.room || '').replace(/[\sม\.]/g, '');
-                            const sSub = String(parsed.subjectCode || '').replace(/[^ก-๙a-zA-Z0-9]/g, '').toUpperCase();
+                            // 💡 แก้ไข: ใช้ ชื่อวิชา (subjectName) และห้อง (room)
+                            let sRooms = String(parsed.room || '').split(',').map(x => x.replace(/[\sม\.]/g, '').trim()).filter(Boolean);
+                            let sSubs = String(parsed.subjectName || '').split(',').map(x => x.replace(/[^ก-๙a-zA-Z0-9]/g, '').toUpperCase().trim()).filter(Boolean);
                             const sPer = String(parsed.period || '').trim();
 
+                            if (sSubs.length === 0) sSubs = ['NOSUBJECT'];
+                            if (sRooms.length === 0) sRooms = ['NOROOM'];
+
                             let isChecked = false;
-                            if (sSub === 'HR000' || sPer === '0' || sPer === 'คาบ 0' || sPer === 'โฮมรูม') {
-                                isChecked = checkedSet.has(`${sSub}_${sRoom}`);
-                            } else {
-                                isChecked = checkedSet.has(`${sSub}_${sRoom}_${sPer}`) || checkedSet.has(`${sSub}_${sRoom}`);
+                            for (const sSub of sSubs) {
+                                for (const sRoom of sRooms) {
+                                    if (sSub.includes('โฮมรูม') || sSub.includes('หน้าเสาธง') || sPer === '0' || sPer === 'คาบ 0' || sPer === 'โฮมรูม') {
+                                        if (checkedSet.has(`${sSub}_${sRoom}`) || checkedSet.has(`กิจกรรมหน้าเสาธงโฮมรูม_${sRoom}`)) isChecked = true;
+                                    } else {
+                                        if (checkedSet.has(`${sSub}_${sRoom}_${sPer}`) || checkedSet.has(`${sSub}_${sRoom}`)) isChecked = true;
+                                    }
+                                }
                             }
 
                             if (isChecked) { checkedClasses.push(clsData); } else { uncheckedClasses.push(clsData); }
@@ -8304,12 +8395,12 @@
                             <div className="flex items-center justify-between w-full md:w-auto">
                                 <h2 className="text-base md:text-xl font-bold text-ns-blue"><i className="fa-solid fa-clipboard-user mr-2 text-blue-500"></i> เช็คชื่อเข้าเรียน</h2>
                                 <div className="md:hidden bg-gray-800 text-ns-yellow font-mono font-bold px-2 py-1 rounded-lg text-xs shadow-inner flex items-center">
-                                    <i className="fa-regular fa-clock mr-1"></i> {timeStrWithSec}
+                                    <i className="fa-regular fa-clock mr-1"></i> <RealtimeClock />
                                 </div>
                             </div>
                             <div className="flex gap-2 items-center flex-wrap w-full md:w-auto justify-between md:justify-end">
                                 <div className="hidden md:flex bg-gray-800 text-ns-yellow font-mono font-bold px-3 py-1 rounded-lg text-lg shadow-inner items-center">
-                                    <i className="fa-regular fa-clock mr-2"></i> {timeStrWithSec}
+                                    <i className="fa-regular fa-clock mr-2"></i> <RealtimeClock />
                                 </div>
                                 {/* ปุ่มเมนูสร้างรายงาน สำหรับ Admin และ ครูฝ่ายปกครอง (administrative) */}
                                 {user && (user.role === 'admin' || user.role === 'administrative') && (
@@ -11379,8 +11470,8 @@
             const [adminSelectedTeacher, setAdminSelectedTeacher] = useState('');
 
             useEffect(() => {
-                const fetchTeacherSchedule = async () => {
-                    if (!user || !user.name) return;
+                const loadTeacherSchedule = () => {
+                    if (!user || !user.name || !allSchedules || allSchedules.length === 0) return;
                     setIsFetchingSchedule(true);
                     let loaded = [];
                     
@@ -11401,75 +11492,78 @@
                         return clean;
                     };
                     const userCleanName = normalizeName(user.name);
+                    const cleanSubCode = (c) => String(c || '').replace(/[^ก-๙a-zA-Z0-9]/g, '').toUpperCase();
+                    
+                    const parseScheduleRow = (row) => {
+                        const getVal = (r, idx, enKey, thKeys) => {
+                            if (Array.isArray(r)) return r[idx] !== undefined ? String(r[idx]) : '';
+                            if (r[enKey] !== undefined) return String(r[enKey]);
+                            for (let k of thKeys) { if (r[k] !== undefined) return String(r[k]); }
+                            const vals = Object.values(r);
+                            if (vals[idx] !== undefined) return String(vals[idx]);
+                            return '';
+                        };
+                        return {
+                            day: getVal(row, 0, 'day', ['วัน', 'Day']),
+                            period: getVal(row, 1, 'period', ['คาบที่', 'คาบ']),
+                            subjectCode: getVal(row, 2, 'subjectCode', ['รหัสวิชา']),
+                            subjectName: getVal(row, 3, 'subjectName', ['ชื่อวิชา']),
+                            teacherName: getVal(row, 4, 'teacherName', ['ชื่อครูผู้สอน', 'ครูผู้สอน', 'ครู']),
+                            room: getVal(row, 5, 'room', ['ชั้น/ห้อง', 'ห้อง'])
+                        };
+                    };
 
-                    try {
-                        const res = await callGAS('getSchedules', { targetSheetId: '1pgvYO_Qh9m-3HkLV3kbyOyK-ztdO1Vb2yNTxk3X6RV0' });
-                        if (res.status === 'success' && res.data) {
-                            const cleanSubCode = (c) => String(c || '').replace(/[^ก-๙a-zA-Z0-9]/g, '').toUpperCase();
-                            const subjectCodeNameMap = {};
-                            const nameFreq = {};
-                            res.data.forEach(r => {
-                                const code = cleanSubCode(r.subjectCode || r[2]);
-                                const name = String(r.subjectName || r[3] || '').trim();
-                                if (code && name) {
-                                    if (!nameFreq[code]) nameFreq[code] = {};
-                                    nameFreq[code][name] = (nameFreq[code][name] || 0) + 1;
-                                }
-                            });
-                            for (const code in nameFreq) {
-                                let maxCount = 0;
-                                let bestName = '';
-                                for (const name in nameFreq[code]) {
-                                    if (nameFreq[code][name] > maxCount) {
-                                        maxCount = nameFreq[code][name];
-                                        bestName = name;
-                                    }
-                                }
-                                subjectCodeNameMap[code] = bestName;
-                            }
-
-                            res.data.forEach((r, idx) => {
-                                if (Array.isArray(r) && idx === 0 && String(r[0]).includes('วัน')) return;
-                                
-                                const rTeacherName = r.teacherName || r[4];
-                                const rSubjectCode = r.subjectCode || r[2];
-                                const rSubjectName = r.subjectName || r[3];
-                                const rRoom = r.room || r[5];
-                                const rDay = r.day || r[0];
-                                const rPeriod = r.period || r[1];
-
-                                const rowCleanName = normalizeName(rTeacherName);
-                                if (user.role === 'admin' || (rowCleanName && userCleanName && (rowCleanName.includes(userCleanName) || userCleanName.includes(rowCleanName)))) {
-                                    const sCode = cleanSubCode(rSubjectCode);
-                                    let sName = String(rSubjectName || '').trim();
-                                    if (!sName && sCode && subjectCodeNameMap[sCode]) sName = subjectCodeNameMap[sCode];
-
-                                    loaded.push({
-                                        day: String(rDay || '').trim(),
-                                        period: String(rPeriod || '').trim(),
-                                        subjectCode: sCode,
-                                        subjectName: sName,
-                                        teacherName: String(rTeacherName || '').trim(),
-                                        room: String(rRoom || '').trim()
-                                    });
-                                }
-                            });
-                        } else {
-                            alert("ระบบหลังบ้านแจ้งข้อผิดพลาด: โปรดตรวจสอบว่าได้เพิ่มฟังก์ชัน getSchedules ในไฟล์ Code.gs แล้วหรือยังครับ");
+                    const subjectCodeNameMap = {};
+                    const nameFreq = {};
+                    
+                    allSchedules.forEach((r, idx) => {
+                        if (Array.isArray(r) && idx === 0 && String(r[0]).includes('วัน')) return;
+                        const parsed = parseScheduleRow(r);
+                        const code = cleanSubCode(parsed.subjectCode);
+                        const name = parsed.subjectName.trim();
+                        if (code && name) {
+                            if (!nameFreq[code]) nameFreq[code] = {};
+                            nameFreq[code][name] = (nameFreq[code][name] || 0) + 1;
                         }
-                    } catch (error) {
-                        console.error("Failed to load schedule from GAS:", error);
-                        alert("ไม่สามารถเชื่อมต่อเพื่อดึงตารางสอนได้ กรุณาอัปเดตไฟล์ Code.gs (Apps Script) ตามคำแนะนำก่อนครับ");
+                    });
+                    for (const code in nameFreq) {
+                        let maxCount = 0; let bestName = '';
+                        for (const name in nameFreq[code]) {
+                            if (nameFreq[code][name] > maxCount) { maxCount = nameFreq[code][name]; bestName = name; }
+                        }
+                        subjectCodeNameMap[code] = bestName;
                     }
+
+                    allSchedules.forEach((r, idx) => {
+                        if (Array.isArray(r) && idx === 0 && String(r[0]).includes('วัน')) return;
+                        
+                        const parsed = parseScheduleRow(r);
+                        const rowCleanName = normalizeName(parsed.teacherName);
+                        
+                        if (user.role === 'admin' || (rowCleanName && userCleanName && (rowCleanName.includes(userCleanName) || userCleanName.includes(rowCleanName)))) {
+                            const sCode = cleanSubCode(parsed.subjectCode);
+                            let sName = String(parsed.subjectName || '').trim();
+                            if (!sName && sCode && subjectCodeNameMap[sCode]) sName = subjectCodeNameMap[sCode];
+
+                            loaded.push({
+                                day: String(parsed.day || '').trim(),
+                                period: String(parsed.period || '').trim(),
+                                subjectCode: sCode,
+                                subjectName: sName,
+                                teacherName: String(parsed.teacherName || '').trim(),
+                                room: String(parsed.room || '').trim()
+                            });
+                        }
+                    });
                     
                     setMySchedules(loaded);
                     setIsFetchingSchedule(false);
                 };
                 
                 if (activeTab === 'attendance' && mySchedules.length === 0) {
-                    fetchTeacherSchedule();
+                    loadTeacherSchedule();
                 }
-            }, [activeTab, user]);
+            }, [activeTab, user, allSchedules]);
 
             const mySubjects = mySchedules.reduce((acc, curr) => {
                 const key = `${curr.subjectCode}|${curr.subjectName}|${curr.room}|${curr.teacherName}`;
@@ -11649,6 +11743,12 @@
                     if (subjectRegis.length > 0) {
                         // 💡 แก้ไข: ในหน้ารายงาน ดึงเฉพาะนักเรียนในห้องเป้าหมาย (ป้องกันรายชื่อห้องอื่นปนเข้ามา)
                         const targetRoomsArr = String(room).split(',').map(x => x.trim()).filter(Boolean);
+                        
+                        // 💡 การเพิ่มประสิทธิภาพ (Performance Optimization): สร้าง Set เพื่อค้นหารหัสนักเรียนแบบ O(1)
+                        const regIdsSet = new Set(subjectRegis.map(r => {
+                            const val = String(r.studentId).trim();
+                            return val; 
+                        }));
 
                         matchedStudents = (students || []).filter(s => {
                             const sFullRoom = s.classLevel && s.room ? `${s.classLevel}/${s.room}` : '';
@@ -11656,7 +11756,8 @@
                             
                             if (!isInTargetRoom && targetRoomsArr.length > 0) return false;
 
-                            return subjectRegis.some(r => isMatchId(r.studentId, s.code));
+                            const cleanCode = String(s.code).trim();
+                            return regIdsSet.has(cleanCode);
                         });
                     } else {
                         // หากไม่มีการลงทะเบียน ให้ดึงเด็กจากห้องปกติมาแสดง (Fallback)
