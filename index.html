@@ -7634,6 +7634,9 @@
             const [scannedStudents, setScannedStudents] = useState([]); 
             const [scanPopup, setScanPopup] = useState(null); 
             
+            // 💡 [เพิ่มใหม่] สร้าง Ref สำหรับเก็บ Cache วันที่ ไม่ให้ถูกเคลียร์ทิ้งตอน Component Re-render
+            const dateCacheRef = useRef({});
+
             const scanDataRef = useRef({ 
                 targetStudents: [], scanStatus: 'มา', scannedStudents: [], lastScanned: null, timeoutRef: null,
                 activeSubject: null, activePeriods: [], currentDate: '', user: null
@@ -8211,12 +8214,15 @@
                             });
                             
                             if (subjectRegis.length > 0) {
+                                // 🚀 [Performance Fix 1: เร่งความเร็วการหานักเรียน] ใช้ Set แทนการวนลูปซ้อน (O(1) Lookup) ทำให้หน้าเว็บไม่ค้าง
+                                const regIdsSet = new Set(subjectRegis.map(r => String(r.studentId).trim()));
+
                                 matchedStudents = (students || []).filter(s => {
                                     const sFullRoom = s.classLevel && s.room ? `${s.classLevel}/${s.room}` : '';
                                     const isInScheduleRoom = scheduleRooms.includes(sFullRoom) || scheduleRooms.includes(s.classLevel) || scheduleRooms.includes(s.room);
                                     
                                     if (!isInScheduleRoom && scheduleRooms.length > 0) return false;
-                                    return subjectRegis.some(r => String(r.studentId).trim() === String(s.code).trim());
+                                    return regIdsSet.has(String(s.code).trim());
                                 });
                             } else {
                                 // 💡 Fallback: ถ้ารายวิชานั้นยังไม่ได้ลงทะเบียนในระบบ หรือข้อมูลไม่ตรงกันเลย ให้ดึงเด็กนักเรียน "ทั้งห้อง" มาแสดงให้เช็คชื่อได้เลย
@@ -8237,100 +8243,90 @@
                             return `${dateParts[2]}/${dateParts[1]}/${Number(dateParts[0])+543}`;
                         };
                         const targetDateTH = formatInputDateToTH(currentDate);
-                        const cacheKey = `${matchedSchedule.subjectCode}_${matchedSchedule.room}`;
+                        
+                        // 💡 [แก้ไข] แยก Cache Key เป็นรายวัน เพื่อป้องกันการทับซ้อนและรองรับการดึงข้อมูลทีละวัน
+                        const cacheKey = `${matchedSchedule.subjectCode}_${matchedSchedule.room}_${targetDateTH}`; 
                         const periodsStr = targetBlock.map(String);
 
-                        // 🚀 [Performance Fix 1: โหลดข้อมูลเร็วขึ้น] คัดกรองใบลาของวันนี้ออกมาก่อน แล้วสร้าง Map
-                        const todaysLeaves = (leaveRecords || []).filter(r => formatDisplayDate(r.date) === targetDateTH);
-                        const leavesMap = {};
-                        todaysLeaves.forEach(r => {
-                            const sId = String(r.studentId).trim();
-                            if (!leavesMap[sId]) leavesMap[sId] = [];
-                            leavesMap[sId].push(r);
-                        });
-
-                        const initialAttData = {};
-                        matchedStudents.forEach(stu => {
-                            // ดึงใบลาจาก Map ทันที (ไม่ต้องไป filter จาก array หลักทุกรอบ)
-                            const dailyLeaves = leavesMap[String(stu.code).trim()] || [];
-                            
-                            for (const leaveRecord of dailyLeaves) {
-                                if (leaveRecord.leavePeriods && leaveRecord.leavePeriods !== '' && leaveRecord.leavePeriods !== '[]') {
-                                    // 💡 [แก้ไข] เปลี่ยนวิธีแยกคาบที่ลาโดยไม่ใช้ JSON.parse ป้องกัน Error ที่ทำให้กลายเป็นลาเต็มวันทุกคาบ
-                                    let periods = [];
-                                    const rawPeriods = leaveRecord.leavePeriods;
-                                    
-                                    if (typeof rawPeriods === 'string') {
-                                        // ตัดวงเล็บ เครื่องหมายคำพูด และช่องว่างออกทั้งหมด แล้วแยกด้วยลูกน้ำอย่างปลอดภัย
-                                        periods = rawPeriods.replace(/[\[\]"'\s]/g, '').split(',').filter(Boolean);
-                                    } else if (Array.isArray(rawPeriods)) {
-                                        periods = rawPeriods.map(String);
-                                    }
-
-                                    // 💡 [แก้ไขสาเหตุที่ 1] ใช้ targetBlock แทน activePeriods เพราะ activePeriods ยังอัปเดตไม่เสร็จในรอบเรนเดอร์นี้
-                                    const isLeaveInThisPeriod = targetBlock.some(p => periods.includes(String(p).trim()));
-                                    
-                                    if (isLeaveInThisPeriod) {
-                                        initialAttData[stu.code] = leaveRecord.leaveType; 
-                                        break; // เจอสถานะลาที่ตรงกับคาบแล้ว ให้หยุดเช็ค
-                                    }
-                                    // *** หากไม่ตรงคาบ ให้ปล่อยผ่านไปเฉยๆ ไม่ต้องลงไปที่ else เพื่อให้คาบอื่นยังคงเช็คชื่อได้ตามปกติ ***
-                                } else {
-                                    // ไม่มีระบุคาบในฐานข้อมูล = ลาเต็มวัน
-                                    initialAttData[stu.code] = leaveRecord.leaveType; 
-                                    break;
-                                }
-                            }
-                        });
-                        setAttendanceData(initialAttData);
-                        setIsEditMode(false);
-
-                        const applyExistingData = (cachedRecords) => {
-                            const existingRecords = cachedRecords.filter(r => 
-                                String(r.date).trim() === String(targetDateTH).trim() && 
-                                periodsStr.includes(String(r.period).trim())
-                            );
-
-                            if (existingRecords.length > 0) {
-                                const existingData = {};
-                                existingRecords.forEach(r => { existingData[String(r.studentId).trim()] = String(r.status).trim(); });
-                                
-                                setAttendanceData(prev => {
-                                    const merged = { ...prev };
-                                    matchedStudents.forEach(stu => {
-                                        const sCode = String(stu.code).trim();
-                                        // 💡 [แก้ไขสาเหตุที่ 2] ป้องกันไม่ให้สถานะเช็คชื่อเก่าในแคช (เช่น ขาด/มา) มาทับสถานะ "ลา" ที่ดึงมาจากหน้าแจ้งลาล่าสุด
-                                        if (existingData[sCode]) {
-                                            const isCurrentlyLeave = ['ลาป่วย', 'ลากิจ', 'ไปกิจกรรม'].includes(merged[sCode]);
-                                            const isIncomingLeave = ['ลาป่วย', 'ลากิจ', 'ไปกิจกรรม'].includes(existingData[sCode]);
-                                            
-                                            if (isCurrentlyLeave && !isIncomingLeave) {
-                                                // หากหน้าแจ้งลาระบุว่าลาแล้ว ไม่ต้องเอาสถานะเก่ามาทับ ปล่อยคงเดิมไว้ให้แสดงสถานะลาอัตโนมัติ
-                                            } else {
-                                                merged[sCode] = existingData[sCode];
-                                            }
-                                        }
-                                    });
-                                    return merged;
-                                });
-                                setIsEditMode(true);
-                            }
+                        // 🚀 [Performance Fix 2: โหลดข้อมูลเร็วขึ้น] ฟังก์ชันแคชการแปลงวันที่ที่เก็บค่าข้ามรอบเรนเดอร์ได้
+                        const fastDateFormatter = (rawDate) => {
+                            if (!rawDate) return '';
+                            const str = String(rawDate).trim();
+                            if (dateCacheRef.current[str]) return dateCacheRef.current[str];
+                            const formatted = formatDisplayDate(str);
+                            dateCacheRef.current[str] = formatted;
+                            return formatted;
                         };
 
+                        // 👇👇👇 [แก้ไข: โหลดข้อมูลประวัติเช็คชื่อ และ ใบลา แบบคู่ขนาน (Concurrent) เพื่อเพิ่มความเร็ว] 👇👇👇
+                        setIsFetchingAttendance(true);
+
+                        // 1. เตรียมคำสั่งขอดึงใบลาล่าสุด (เจาะทะลุแคชด้วย POST)
+                        const fetchLeavesPromise = callGAS('getAppStartupData', {}).catch(e => null);
+
+                        // 2. เตรียมคำสั่งขอดึงประวัติการเช็คชื่อ (ดึงจาก Cache ก่อน ถ้าไม่มีค่อยขอจาก Server)
+                        let fetchAttendancePromise;
                         if (attendanceCache[cacheKey]) {
-                            applyExistingData(attendanceCache[cacheKey]);
+                            fetchAttendancePromise = Promise.resolve({ status: 'success', data: attendanceCache[cacheKey], isCached: true });
                         } else {
-                            setIsFetchingAttendance(true);
-                            callGAS('getAttendanceRecord', {
+                            fetchAttendancePromise = callGAS('getAttendanceRecord', {
                                 targetSheetId: '1MhcJlaASLVPzPNb3u1JUoVOIW381b2CD41VdoSAUj48',
-                                date: 'ALL', 
+                                date: targetDateTH,
                                 room: matchedSchedule.room,
                                 subjectCode: matchedSchedule.subjectCode
-                            }).then(res => {
-                                if (res && res.status === 'success') {
-                                    let fetchedData = res.data || [];
+                            }).catch(e => ({ status: 'error', data: [] }));
+                        }
+
+                        // 🚀 สั่งรัน 2 คำสั่งพร้อมกัน! ช่วยลดเวลาโหลดลงอย่างมาก
+                        Promise.all([fetchLeavesPromise, fetchAttendancePromise]).then(([leavesRes, attRes]) => {
+                            
+                            // --- ส่วนที่ 1: จัดเตรียมข้อมูลใบลา Real-time ---
+                            let realtimeLeaves = leaveRecords || []; 
+                            if (leavesRes && leavesRes.status === 'success' && leavesRes.data && leavesRes.data.leaveRecords) {
+                                realtimeLeaves = leavesRes.data.leaveRecords;
+                                // 💡 [แก้ไขสำคัญมาก]: เอา setLeaveRecords ออกเพื่อตัดวงจร Infinite Loop 
+                                // สาเหตุที่ระบบโหลดกระตุกและดึงข้อมูลไม่สำเร็จ เพราะการ Set State ตรงนี้ทำให้ React สั่งดึงข้อมูลใหม่วนซ้ำไม่รู้จบ
+                            }
+
+                            const todaysLeaves = realtimeLeaves.filter(r => fastDateFormatter(r.date) === targetDateTH);
+                            const leavesMap = {};
+                            todaysLeaves.forEach(r => {
+                                const sId = String(r.studentId).trim();
+                                if (!leavesMap[sId]) leavesMap[sId] = [];
+                                leavesMap[sId].push(r);
+                            });
+
+                            const initialAttData = {};
+                            matchedStudents.forEach(stu => {
+                                const dailyLeaves = leavesMap[String(stu.code).trim()] || [];
+                                for (const leaveRecord of dailyLeaves) {
+                                    if (leaveRecord.leavePeriods && leaveRecord.leavePeriods !== '' && leaveRecord.leavePeriods !== '[]') {
+                                        let periods = [];
+                                        const rawPeriods = leaveRecord.leavePeriods;
+                                        if (typeof rawPeriods === 'string') {
+                                            periods = rawPeriods.replace(/[\[\]"'\s]/g, '').split(',').filter(Boolean);
+                                        } else if (Array.isArray(rawPeriods)) {
+                                            periods = rawPeriods.map(String);
+                                        }
+                                        if (targetBlock.some(p => periods.includes(String(p).trim()))) {
+                                            initialAttData[stu.code] = leaveRecord.leaveType; 
+                                            break;
+                                        }
+                                    } else {
+                                        initialAttData[stu.code] = leaveRecord.leaveType; 
+                                        break;
+                                    }
+                                }
+                            });
+
+                            // --- ส่วนที่ 2: จัดเตรียมข้อมูลประวัติการเช็คชื่อเดิม ---
+                            let fetchedData = [];
+                            if (attRes && attRes.status === 'success') {
+                                if (attRes.isCached) {
+                                    fetchedData = attRes.data;
+                                } else {
                                     let parsedRecords = [];
-                                    fetchedData.forEach(r => {
+                                    (attRes.data || []).forEach(r => {
                                         let isJsonStr = false;
                                         if (r.status && typeof r.status === 'string' && r.status.includes('{')) {
                                             try {
@@ -8346,17 +8342,51 @@
                                                 }
                                             } catch(e) {}
                                         }
-                                        if (!isJsonStr && r.date) {
-                                            parsedRecords.push(r);
-                                        }
+                                        if (!isJsonStr && r.date) parsedRecords.push(r);
                                     });
                                     fetchedData = parsedRecords;
+                                    // บันทึกลง Cache เพื่อให้การกดกลับมาคาบเดิมเร็วขึ้น
                                     setAttendanceCache(prev => ({ ...prev, [cacheKey]: fetchedData }));
-                                    applyExistingData(fetchedData);
                                 }
-                            }).catch(e => console.error("Error fetching existing attendance:", e))
-                            .finally(() => setIsFetchingAttendance(false));
-                        }
+                            }
+
+                            // --- ส่วนที่ 3: ผสานข้อมูล (Merge) ทั้งสองส่วนเข้าด้วยกัน ---
+                            const existingRecords = fetchedData.filter(r => 
+                                fastDateFormatter(r.date) === targetDateTH && 
+                                periodsStr.includes(String(r.period).trim())
+                            );
+
+                            const finalDataToSet = { ...initialAttData }; 
+
+                            if (existingRecords.length > 0) {
+                                const existingData = {};
+                                existingRecords.forEach(r => { existingData[String(r.studentId).trim()] = String(r.status).trim(); });
+                                
+                                matchedStudents.forEach(stu => {
+                                    const sCode = String(stu.code).trim();
+                                    if (existingData[sCode]) {
+                                        const isCurrentlyLeave = ['ลาป่วย', 'ลากิจ', 'ไปกิจกรรม'].includes(finalDataToSet[sCode]);
+                                        const isIncomingLeave = ['ลาป่วย', 'ลากิจ', 'ไปกิจกรรม'].includes(existingData[sCode]);
+                                        
+                                        // หากหน้าแจ้งลาระบุว่าลาแล้ว ไม่ต้องเอาสถานะเช็คชื่อเก่า (เช่น ขาด/มา) มาทับ
+                                        if (isCurrentlyLeave && !isIncomingLeave) {
+                                            // ข้ามไป คงสถานะลาล่าสุดจาก Real-time ไว้
+                                        } else {
+                                            finalDataToSet[sCode] = existingData[sCode];
+                                        }
+                                    }
+                                });
+                                setIsEditMode(true);
+                            } else {
+                                setIsEditMode(false);
+                            }
+                            
+                            setAttendanceData(finalDataToSet);
+
+                        }).finally(() => {
+                            setIsFetchingAttendance(false);
+                        });
+                        // 👆👆👆 [สิ้นสุดการแก้ไขส่วนเพิ่มความเร็ว] 👆👆👆
 
                     } else {
                         setActiveSubject(null);
@@ -16089,8 +16119,8 @@
                     }
                     
                     if (rows.length > 1) {
-                        // 💡 ตรวจสอบคอลัมน์ให้ครบ 38 คอลัมน์ (ถึงคอลัมน์ AL สำหรับ orderNo)
-                        if (rows[0].length < 38) {
+                        // 💡 [แก้ไขสาเหตุที่ข้อมูล CSV หาย] ลดความเข้มงวดการตรวจคอลัมน์ลง เพื่อป้องกัน Google Sheet ละทิ้งคอลัมน์ที่หัวตารางว่างเปล่าตอน Export CSV
+                        if (rows[0].length < 30) {
                             console.warn("ตรวจพบ CSV แคชเก่า (คอลัมน์ไม่ครบ) ระบบจะสลับไปดึงข้อมูลตรงจากฐานข้อมูล...");
                             throw new Error("CSV Cache outdated");
                         }
@@ -16176,7 +16206,7 @@
                                 parentsStatus: cols[34] ? cols[34].trim() : '',       // AI (34)
                                 livingWith: cols[35] ? cols[35].trim() : '',          // AJ (35)
                                 parentIncome: cols[36] ? cols[36].trim() : '',        // AK (36)
-                                orderNo: cols[37] ? cols[37].trim() : ''              // AL (37) เพิ่มดึงข้อมูลเลขที่นักเรียน
+                                orderNo: cols[37] !== undefined ? cols[37].trim() : '' // AL (37) ป้องกันบัค undefined เมื่อคอลัมน์ขาด
                             });
                         }
                         return parsedStudents;
@@ -16334,10 +16364,13 @@
                             // แทนที่จะให้ GAS ทับ CSV ทั้งก้อน เราจะนำข้อมูลมารวมกัน เพื่อรักษาค่า orderNo ที่อ่านได้จาก CSV เอาไว้
                             if (gasMap.has(code)) {
                                 const gasData = gasMap.get(code);
+                                // ตรวจสอบค่า orderNo อย่างรัดกุม ถ้าของ GAS เป็นค่าว่าง ให้ใช้ของ CSV แทน
+                                const finalOrderNo = (gasData.orderNo && String(gasData.orderNo).trim() !== '') ? gasData.orderNo : s.orderNo;
+
                                 mergedStudents.push({ 
-                                    ...s,         // เอาโครงสร้างและข้อมูลจาก CSV เป็นฐาน (มี orderNo แน่นอน)
+                                    ...s,         // เอาโครงสร้างและข้อมูลจาก CSV เป็นฐาน
                                     ...gasData,   // เอาข้อมูลจาก GAS มาอัปเดตทับ (ชื่อ/ชั้น อาจจะสดใหม่กว่า)
-                                    orderNo: gasData.orderNo || s.orderNo // บังคับรักษาเลขที่ไว้ หาก GAS ไม่มีให้ใช้ของ CSV
+                                    orderNo: finalOrderNo // บังคับรักษาเลขที่ไว้
                                 });
                             } else {
                                 mergedStudents.push(s);
