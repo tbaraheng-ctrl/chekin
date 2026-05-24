@@ -6610,6 +6610,7 @@
 
             const [checkedStudents, setCheckedStudents] = useState([]); // นักเรียนฝั่งซ้าย (ติ๊กเลือก)
             const [stagedStudents, setStagedStudents] = useState([]); // นักเรียนฝั่งขวา (เตรียมลงทะเบียน)
+            const [checkedStagedStudents, setCheckedStagedStudents] = useState([]); // 💡 เพิ่ม State นักเรียนฝั่งขวา (ติ๊กเลือกเพื่อยกเลิก)
             
             const [isEditing, setIsEditing] = useState(false);
             const [isSaving, setIsSaving] = useState(false);
@@ -6831,6 +6832,7 @@
                 
                 setSelectedRooms(newSelectedRooms);
                 setCheckedStudents([]);
+                setCheckedStagedStudents([]); // ล้างการเลือกเมื่อเปลี่ยนห้อง
                 
                 // โหลดนักเรียนจากห้องที่เลือกทั้งหมด
                 if (newSelectedRooms.length > 0 && selectedSubjectObj && selectedTeacher) {
@@ -6857,6 +6859,46 @@
                          const uniqueRegs = Array.from(new Map(allRegisteredStudents.map(item => [item.code, item])).values());
                          setStagedStudents(uniqueRegs.sort((a,b) => Number(a.code) - Number(b.code)));
                          setIsEditing(true); // ปรับปุ่มเป็น "ยืนยันแก้ไข" อัตโนมัติ
+                    } else {
+                         setStagedStudents([]);
+                         setIsEditing(false);
+                    }
+                } else {
+                    setStagedStudents([]);
+                    setIsEditing(false);
+                }
+            };
+
+            // 💡 เพิ่มฟังก์ชันเลือกห้องทั้งหมด
+            const handleSelectAllRooms = (isChecked) => {
+                const newSelectedRooms = isChecked ? [...availableUniqueRooms] : [];
+                setSelectedRooms(newSelectedRooms);
+                setCheckedStudents([]);
+                setCheckedStagedStudents([]);
+
+                if (newSelectedRooms.length > 0 && selectedSubjectObj && selectedTeacher) {
+                    let allRegisteredStudents = [];
+                    let hasExisting = false;
+                    
+                    newSelectedRooms.forEach(r => {
+                         const existingRegs = records.filter(rec => {
+                            const recRooms = String(rec.room || '').split(',').map(x => x.trim());
+                            return rec.subjectCode === selectedSubjectObj.code && 
+                                   recRooms.includes(r) && 
+                                   rec.teacherName === selectedTeacher;
+                        });
+                        if(existingRegs.length > 0) {
+                            hasExisting = true;
+                            existingRegs.forEach(rec => {
+                                allRegisteredStudents.push({ code: rec.studentId, name: rec.studentName });
+                            });
+                        }
+                    });
+                    
+                    if (hasExisting && newSelectedRooms.length === 1) {
+                         const uniqueRegs = Array.from(new Map(allRegisteredStudents.map(item => [item.code, item])).values());
+                         setStagedStudents(uniqueRegs.sort((a,b) => Number(a.code) - Number(b.code)));
+                         setIsEditing(true);
                     } else {
                          setStagedStudents([]);
                          setIsEditing(false);
@@ -6936,9 +6978,20 @@
 
             const removeFromStage = (code) => {
                 setStagedStudents(stagedStudents.filter(s => s.code !== code));
+                setCheckedStagedStudents(prev => prev.filter(c => c !== code)); // ลบออกจากรายการที่ติ๊กด้วย
             };
 
-            // 💡 แก้ไข: ฟังก์ชันบันทึกข้อมูลแบบ Optimistic UI (อัปเดตทันที ไม่ต้องรอโหลด)
+            // 💡 เพิ่มฟังก์ชันสำหรับการเลือกติ๊กรายชื่อฝั่งขวา
+            const toggleStagedStudent = (code) => {
+                if (checkedStagedStudents.includes(code)) setCheckedStagedStudents(checkedStagedStudents.filter(c => c !== code));
+                else setCheckedStagedStudents([...checkedStagedStudents, code]);
+            };
+
+            const removeSelectedFromStage = () => {
+                setStagedStudents(stagedStudents.filter(s => !checkedStagedStudents.includes(s.code)));
+                setCheckedStagedStudents([]);
+            };
+
             const handleSave = async () => {
                 if (!selectedTeacher || !selectedSubjectObj || selectedRooms.length === 0 || stagedStudents.length === 0) return;
                 setIsSaving(true);
@@ -6976,6 +7029,7 @@
                 setIsEditing(false);
                 setStagedStudents([]);
                 setCheckedStudents([]);
+                setCheckedStagedStudents([]); // ล้างการเลือกฝั่งขวา
                 setSelectedRooms([]);
                 setIsSaving(false);
 
@@ -7018,6 +7072,7 @@
                     setIsEditing(false);
                     setStagedStudents([]);
                     setCheckedStudents([]);
+                    setCheckedStagedStudents([]); // ล้างการเลือกฝั่งขวา
                     setSelectedRooms([]);
                 }
                 
@@ -7052,6 +7107,7 @@
                 setSelectedRooms(roomsArr);
                 setStagedStudents(grp.students.map(s => ({ code: s.studentId, name: s.studentName })).sort((a,b) => Number(a.code) - Number(b.code)));
                 setCheckedStudents([]);
+                setCheckedStagedStudents([]); // ล้างการเลือกฝั่งขวา
                 setIsEditing(true);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             };
@@ -7347,7 +7403,7 @@
                                         <label className="block text-sm font-bold text-fuchsia-700 mb-2">เลือกกลุ่มสาระ</label>
                                         <select 
                                             value={selectedDept} 
-                                            onChange={e => { setSelectedDept(e.target.value); setSelectedTeacher(''); setSelectedSubjectObj(null); setSelectedRooms([]); setIsEditing(false); setCheckedStudents([]); setStagedStudents([]); }}
+                                            onChange={e => { setSelectedDept(e.target.value); setSelectedTeacher(''); setSelectedSubjectObj(null); setSelectedRooms([]); setIsEditing(false); setCheckedStudents([]); setStagedStudents([]); setCheckedStagedStudents([]); }}
                                             className="w-full border-2 border-fuchsia-200 rounded-lg p-2 focus:ring-2 focus:ring-fuchsia-500 outline-none bg-white font-bold"
                                         >
                                             <option value="">-- ทุกกลุ่มสาระ --</option>
@@ -7359,7 +7415,7 @@
                                     <label className="block text-sm font-bold text-gray-700 mb-2">1. เลือกครูประจำวิชา</label>
                                     <select 
                                         value={selectedTeacher} 
-                                        onChange={e => { setSelectedTeacher(e.target.value); setSelectedSubjectObj(null); setSelectedRooms([]); setIsEditing(false); setCheckedStudents([]); setStagedStudents([]); }}
+                                        onChange={e => { setSelectedTeacher(e.target.value); setSelectedSubjectObj(null); setSelectedRooms([]); setIsEditing(false); setCheckedStudents([]); setStagedStudents([]); setCheckedStagedStudents([]); }}
                                         className="w-full border-2 border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-fuchsia-500 outline-none"
                                     >
                                         <option value="">-- เลือกชื่อครู --</option>
@@ -7380,6 +7436,7 @@
                                             setIsEditing(false); 
                                             setCheckedStudents([]);
                                             setStagedStudents([]);
+                                            setCheckedStagedStudents([]);
                                         }}
                                         className="w-full border-2 border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-fuchsia-500 outline-none"
                                         disabled={!selectedTeacher}
@@ -7395,6 +7452,16 @@
                                     <div className={`w-full border-2 border-gray-300 rounded-lg p-2 bg-white max-h-32 overflow-y-auto ${!selectedSubjectObj ? 'opacity-50 pointer-events-none' : 'focus-within:border-fuchsia-500 focus-within:ring-1 focus-within:ring-fuchsia-500'}`}>
                                         {availableUniqueRooms.length > 0 ? (
                                             <div className="flex flex-col gap-1">
+                                                {/* 💡 เพิ่มปุ่ม Checkbox เลือกทั้งหมด สำหรับห้องเรียน */}
+                                                <label className="flex items-center gap-2 cursor-pointer hover:bg-fuchsia-100 bg-fuchsia-50 p-1 rounded transition border-b border-fuchsia-100 mb-1">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={selectedRooms.length === availableUniqueRooms.length && availableUniqueRooms.length > 0}
+                                                        onChange={(e) => handleSelectAllRooms(e.target.checked)}
+                                                        className="w-4 h-4 text-fuchsia-600 border-gray-300 rounded focus:ring-fuchsia-500"
+                                                    />
+                                                    <span className="font-bold text-fuchsia-800 text-sm">เลือกทั้งหมด</span>
+                                                </label>
                                                 {availableUniqueRooms.map(r => (
                                                     <label key={r} className="flex items-center gap-2 cursor-pointer hover:bg-fuchsia-50 p-1 rounded transition">
                                                         <input 
@@ -7465,15 +7532,40 @@
                                     <div className="bg-fuchsia-600 text-white p-3 border-b flex justify-between items-center font-bold">
                                         <span><i className="fa-solid fa-list-check mr-2"></i> รายชื่อลงทะเบียน ({stagedStudents.length} คน)</span>
                                     </div>
+                                    {/* 💡 เพิ่มแถบ Checkbox เลือกทั้งหมดและปุ่มลบ ฝั่งขวา */}
+                                    <div className="bg-gray-100 p-2 border-b flex justify-between items-center">
+                                        <label className="flex items-center font-bold text-gray-700 cursor-pointer text-sm ml-1">
+                                            <input type="checkbox" className="w-4 h-4 mr-2 rounded border-gray-300 text-red-600 focus:ring-red-500" 
+                                                checked={stagedStudents.length > 0 && checkedStagedStudents.length === stagedStudents.length} 
+                                                onChange={(e) => {
+                                                    if (e.target.checked) setCheckedStagedStudents(stagedStudents.map(s => s.code));
+                                                    else setCheckedStagedStudents([]);
+                                                }} 
+                                                disabled={stagedStudents.length === 0}
+                                            />
+                                            เลือกทั้งหมด
+                                        </label>
+                                        {checkedStagedStudents.length > 0 && (
+                                            <button onClick={removeSelectedFromStage} className="text-xs bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded shadow transition flex items-center">
+                                                <i className="fa-solid fa-trash mr-1"></i> นำออก ({checkedStagedStudents.length})
+                                            </button>
+                                        )}
+                                    </div>
                                     <div className="flex-1 overflow-y-auto p-2 bg-white">
                                         {stagedStudents.length > 0 ? stagedStudents.map((s, idx) => (
-                                            <div key={s.code} className="flex items-center justify-between p-2 hover:bg-red-50 rounded border-b border-gray-100 transition group">
+                                            <div key={s.code} className="flex items-center justify-between p-2 hover:bg-red-50 rounded border-b border-gray-100 transition group cursor-pointer" onClick={() => toggleStagedStudent(s.code)}>
                                                 <div className="flex items-center space-x-3">
+                                                    {/* 💡 เพิ่ม Checkbox หน้าชื่อแต่ละคน */}
+                                                    <input type="checkbox" className="w-5 h-5 rounded border-gray-300 text-red-600 focus:ring-red-500 cursor-pointer" 
+                                                        checked={checkedStagedStudents.includes(s.code)} 
+                                                        onChange={() => toggleStagedStudent(s.code)} 
+                                                        onClick={e => e.stopPropagation()}
+                                                    />
                                                     <span className="text-gray-400 w-4 text-right text-xs">{idx + 1}.</span>
                                                     <span className="font-bold text-fuchsia-700 w-16">{s.code}</span>
                                                     <span className="text-gray-800 font-medium">{s.name}</span>
                                                 </div>
-                                                <button onClick={() => removeFromStage(s.code)} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition"><i className="fa-solid fa-times-circle text-lg"></i></button>
+                                                <button onClick={(e) => { e.stopPropagation(); removeFromStage(s.code); }} className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition"><i className="fa-solid fa-times-circle text-lg"></i></button>
                                             </div>
                                         )) : <div className="flex flex-col items-center justify-center h-full text-fuchsia-300 mt-20"><i className="fa-solid fa-clipboard-list text-6xl mb-4"></i><p>ยังไม่มีรายชื่อในกลุ่มนี้</p></div>}
                                     </div>
