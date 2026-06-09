@@ -1031,14 +1031,12 @@
             const [lateInfo, setLateInfo] = useState(null);
             const [exemptInfo, setExemptInfo] = useState(null);
             
-            // --- เพิ่ม State สำหรับกรอกรหัสด้วยมือ ---
             const [manualInput, setManualInput] = useState('');
             const [previewStudent, setPreviewStudent] = useState(null);
-            const [cameraFacingMode, setCameraFacingMode] = useState("environment"); // 💡 เพิ่ม State สำหรับสลับกล้องหน้า-หลังที่หายไป
+            const [cameraFacingMode, setCameraFacingMode] = useState("environment");
 
             useEffect(() => {
                 const elem = document.documentElement;
-                // 🚀 [แก้ไข] เปลี่ยนเป็น .catch(() => {}) เพื่อซ่อน Error ใน Console กรณีที่เบราว์เซอร์ไม่อนุญาตให้ขยายเต็มจอ
                 if (elem.requestFullscreen) {
                     elem.requestFullscreen().catch(() => {});
                 } else if (elem.webkitRequestFullscreen) {
@@ -1064,14 +1062,13 @@
             const latestStudentList = useRef(studentList);
             const latestTimeSettings = useRef(timeSettings);
             const latestBehaviors = useRef(behaviorsSetting || []);
-            const isProcessingRef = useRef(false); // ใช้ useRef แทนตัวแปร Local เพื่อให้ทำงานร่วมกับกรอกมือได้
+            const isProcessingRef = useRef(false);
             
             useEffect(() => { latestRecords.current = records; }, [records]);
             useEffect(() => { latestStudentList.current = studentList; }, [studentList]);
             useEffect(() => { latestTimeSettings.current = timeSettings; }, [timeSettings]);
             useEffect(() => { latestBehaviors.current = behaviorsSetting || []; }, [behaviorsSetting]);
 
-            // คำนวณค่าเริ่มต้นแค่ครั้งเดียวตอนโหลด
             const initialDate = new Date();
             const currentHour = initialDate.getHours();
             const currentMin = initialDate.getMinutes();
@@ -1085,13 +1082,10 @@
             const { isOutMode, isLate } = determineModeAndLate(timeStr, timeSettings.startIn, timeSettings.lateTime, timeSettings.startOut);
             const modeName = isOutMode ? "บันทึกออกโรงเรียน" : "บันทึกเข้าโรงเรียน";
 
-            // 👇 ฟังก์ชันหลักในการบันทึกข้อมูล (ใช้ร่วมกันทั้งกล้องสแกน และ กรอกรหัสด้วยมือ) 👇
             const processScanData = async (decodedText) => {
                 if (isProcessingRef.current) return; 
                 if (!decodedText) return;
                 
-                // 💡 ยกเลิกระบบตรวจสอบ GPS ตรงนี้ (สแกนได้ทันทีโดยไม่ต้องเช็คระยะห่าง)
-
                 isProcessingRef.current = true;
                 setStatus("กำลังตรวจสอบข้อมูล...");
 
@@ -1102,14 +1096,12 @@
                 const { isOutMode: scanIsOutMode, isLate: scanIsLate } = determineModeAndLate(scanTimeStr, latestTimeSettings.current.startIn, latestTimeSettings.current.lateTime, latestTimeSettings.current.startOut);
                 const currentType = scanIsOutMode ? "ออก" : "เข้า";
 
-                // [แก้ไข] ทำความสะอาดรหัส QR ป้องกันอักขระซ่อนเร้น และดึงเฉพาะเลขกรณีคิวอาร์โค้ดเป็น URL
                 let decodedClean = String(decodedText).trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
                 if (decodedClean.includes('http') || decodedClean.includes('/')) {
                     const urlParts = decodedClean.split('/');
                     decodedClean = urlParts[urlParts.length - 1];
                 }
 
-                // [แก้ไข] ฟังก์ชันเทียบรหัสแบบแม่นยำ (รองรับกรณีรหัสมี/ไม่มีเลข 0 นำหน้า เพื่อแก้บัคไม่พบข้อมูล)
                 const isMatchId = (id1, id2) => {
                     if (!id1 || !id2) return false;
                     const s1 = String(id1).replace(/^0+/, '').trim();
@@ -1145,7 +1137,6 @@
                     return str;
                 };
 
-                // แก้ไขการเช็คสแกนซ้ำให้ใช้ฟังก์ชัน isMatchId ที่แม่นยำขึ้น
                 const isDuplicate = latestRecords.current.some(r => 
                     isMatchId(r.studentId, decodedClean) && 
                     safeFormatDate(r.date) === scanDateStr && 
@@ -1153,7 +1144,7 @@
                 );
 
                 if (isDuplicate) {
-                    if (playErrorBeep) playErrorBeep(); // 🚀 ส่งเสียงตื้ดเมื่อสแกนซ้ำ
+                    if (playErrorBeep) playErrorBeep(); 
                     setDuplicateError("คุณได้สแกนบันทึกเข้าหรือออกแล้วก่อนหน้านี้");
                     setStatus("ข้อมูลซ้ำ");
                     setTimeout(() => { setDuplicateError(null); setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingRef.current = false; }, 1000);
@@ -1161,15 +1152,13 @@
                 }
                 
                 try {
-                    // 🚀 [แก้ไข] เพิ่มการเช็คช่วงวันที่ "ระหว่างวันที่ - ถึงวันที่" จาก Firebase
                     const studentExemption = (exemptions || []).find(ex => {
                         if (String(ex.studentId).trim() !== decodedClean) return false;
-                        if (!ex.startDate || !ex.endDate) return true; // รองรับข้อมูลเก่าที่ไม่มีวันที่
+                        if (!ex.startDate || !ex.endDate) return true; 
                         const todayISO = `${scanNow.getFullYear()}-${String(scanNow.getMonth() + 1).padStart(2, '0')}-${String(scanNow.getDate()).padStart(2, '0')}`;
                         return todayISO >= ex.startDate && todayISO <= ex.endDate;
                     });
                     
-                    // 💡 [เพิ่มใหม่] ตรวจสอบว่านักเรียนมีประวัติแจ้งลาในวันนี้หรือไม่
                     const studentLeave = (leaveRecords || []).find(l => 
                         String(l.studentId).trim() === decodedClean && 
                         safeFormatDate(l.date) === scanDateStr
@@ -1180,7 +1169,7 @@
                     
                     if (scanIsLate && currentType === "เข้า") {
                         if (studentLeave) {
-                            isLeaveExempted = true; // ยกเว้นสายเนื่องจากมีการแจ้งลา
+                            isLeaveExempted = true; 
                         } else if (studentExemption) {
                             isExempted = true; 
                             if (studentExemption.allowedLateTime && scanTimeStr > studentExemption.allowedLateTime) {
@@ -1201,6 +1190,9 @@
                         type: currentType,
                         recorder: user ? user.name : 'ระบบอัตโนมัติ'
                     };
+                    
+                    // 💡 [แก้ไข] เรียกเสียง "ติ๊ง" ตรงนี้เมื่อสแกนข้อมูลสำเร็จสมบูรณ์
+                    if (playScanBeep) playScanBeep();
                     
                     setScanResult(newRecord);
                     setStatus("บันทึกสำเร็จ");
@@ -1243,7 +1235,6 @@
                             type: 'ลบ'
                         };
 
-                        // 🚀 [แก้ไข] บันทึกลง Firebase Collection: behavior_records แทน Google Sheet
                         if (window.db) {
                             const safeDate = newBehaviorRecord.date.replace(/\//g, '-');
                             const docRef = window.db.collection('behavior_records').doc(safeDate);
@@ -1264,8 +1255,9 @@
                                 timestamp: firebase.firestore.FieldValue.serverTimestamp()
                             }, { merge: true }).catch(e => console.error("Firebase behavior error:", e));
                             
-                            // ส่งแจ้งเตือน Line Notify
-                            callGAS('sendBehaviorLineNotify', { ...newBehaviorRecord }).catch(e=>console.log("GAS Notify Error:", e));
+                            if (typeof callGAS === 'function') {
+                                callGAS('sendBehaviorLineNotify', { ...newBehaviorRecord }).catch(e=>console.log("GAS Notify Error:", e));
+                            }
                         }
                         
                         if (setBehaviorRecords) {
@@ -1274,7 +1266,6 @@
                         
                         setLateInfo({ count: lateCount, score: deductScore, label: searchKeyword });
 
-                        // --- เพิ่มระบบอัปเดตคาบ 0 เป็น "สาย" อัตโนมัติ (สแกนผ่านกล้อง) ---
                         const classLevelNum = String(studentInfo.classLevel).replace(/[^0-9]/g, '');
                         const hrSubCode = `HR00${classLevelNum}`;
                         const autoAttPayload = {
@@ -1288,32 +1279,27 @@
                             records: [{ studentId: studentInfo.code, studentName: studentInfo.name, status: 'สาย', isChanged: true }]
                         };
                         const batchPayload = { attendance: [autoAttPayload], behaviorsToAdd: [], behaviorsToDelete: [], leavesToAdd: [], leavesToEdit: [], leavesToDelete: [] };
-                        // 🚀 [แก้ไข] ลบ callGAS ที่ซ้ำซ้อนทิ้ง ใช้ Firebase อย่างเดียว เพื่อไม่ให้ค้างรอ
                         if (typeof saveAttendanceBatchToFirebase === 'function') {
                             saveAttendanceBatchToFirebase(batchPayload).catch(e => console.log("Firebase auto att error:", e));
                         }
-                        // ------------------------------------------------
-
                     } else {
                         setLateInfo(null);
                     }
                     
                     latestRecords.current = [newRecord, ...latestRecords.current];
-                    onRecordSaved(newRecord); // 🚀 ระบบ TimeView ด้านหลังจะเล่นเสียงติ๊ดและแสดง Toast มุมขวาให้
+                    onRecordSaved(newRecord); 
 
-                    // 🚀 ปรับเวลาหน่วงหน้าจอ ถ้ามาปกติให้ปลดล็อคกล้องไวขึ้น (1 วิ) เพื่อสแกนคนต่อไป ถ้าสายให้ค้างไว้ 3 วิ
                     const isLateStatus = isExempted || isLeaveExempted ? false : (scanIsLate && currentType === "เข้า");
                     const timeoutDuration = (isLateStatus || isExempted) ? 3000 : 1000;
 
                     setTimeout(() => { setScanResult(null); setLateInfo(null); setExemptInfo(null); setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingRef.current = false; }, timeoutDuration);
                 } catch(err) {
-                    if (playErrorBeep) playErrorBeep(); // 🚀 ส่งเสียงตื้ดเมื่อผิดพลาด
+                    if (playErrorBeep) playErrorBeep(); 
                     setStatus("เกิดข้อผิดพลาดในการบันทึก");
                     setTimeout(() => { setStatus("พร้อมสแกนคิวอาร์โค้ด"); isProcessingRef.current = false; }, 2000);
                 }
             };
 
-            // 👇 ฟังก์ชันตรวจสอบรหัสจากฟอร์มกรอกมือ 👇
             const handleManualCheck = () => {
                 const code = manualInput.trim();
                 if (!code) return;
@@ -1327,7 +1313,6 @@
                 }
             };
 
-            // 👇 แก้ไขปรับปรุงระบบการเรียกกล้อง ลดการชนกันของฮาร์ดแวร์เพื่อแก้ปัญหาหน้าขาว
             useEffect(() => {
                 let scanner = null;
                 let isUnmounted = false;
@@ -1335,24 +1320,29 @@
                 const initCamera = async () => {
                     if (isUnmounted) return;
 
-                    // 💡 [แก้ไข] หน่วงเวลาเล็กน้อยเพื่อให้กล้องตัวเดิมปิดสนิท ป้องกันฮาร์ดแวร์ชนกันตอนสลับกล้อง
                     await new Promise(resolve => setTimeout(resolve, 300));
                     if (isUnmounted) return;
 
                     try {
                         scanner = new window.Html5Qrcode("reader");
                         
-                        // 💡 [แก้ไข] ปรับ Config ให้ปลอดภัย ป้องกันบัคหน้าขาวจาก qrbox ที่คำนวณผิดพลาด
+                        // 💡 [แก้ไข] ปรับความกว้างของกล้องให้เต็มที่ (95%) และบังคับสัดส่วนสี่เหลี่ยมจัตุรัส
                         const config = { 
-                            fps: 15, // FPS พอดีๆ ไม่ทำให้กล้องค้าง
-                            qrbox: { width: 250, height: 250 }, // บังคับขนาดคงที่ ป้องกัน React พัง
-                            aspectRatio: 1.0 
+                            fps: 10, 
+                            qrbox: (viewfinderWidth, viewfinderHeight) => {
+                                const minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
+                                return {
+                                    width: Math.floor(minEdgeSize * 0.95),
+                                    height: Math.floor(minEdgeSize * 0.95)
+                                };
+                            },
+                            aspectRatio: 1.0,
+                            disableFlip: false 
                         };
                         
                         setStatus("กำลังเปิดกล้อง และขออนุญาต...");
 
                         try {
-                            // 💡 Html5Qrcode จะทำการขออนุญาตกล้อง (Permission) อัตโนมัติในขั้นตอนนี้
                             await scanner.start({ facingMode: cameraFacingMode }, config, 
                                 (decodedText) => processScanData(decodedText),
                                 (err) => {}
@@ -1362,7 +1352,6 @@
                             console.warn("ไม่สามารถดึงกล้องโดยตรงได้ กำลังสลับไปค้นหารายชื่อกล้อง...", envError);
                             if (isUnmounted) return;
                             
-                            // ระบบสำรอง: ค้นหากล้องทั้งหมดในเครื่อง
                             try {
                                 const devices = await window.Html5Qrcode.getCameras();
                                 if (devices && devices.length > 0) {
@@ -1387,7 +1376,6 @@
                     }
                 };
 
-                // ตรวจสอบว่ามีไลบรารีสแกนอยู่หรือไม่ หากไม่มีให้โหลดก่อน
                 if (!window.Html5Qrcode) {
                     setStatus("กำลังโหลดระบบกล้อง...");
                     const script = document.createElement('script');
@@ -1414,7 +1402,6 @@
                     }
                 };
             }, [cameraFacingMode]);
-            // 👆 สิ้นสุดการแก้ไขระบบเรียกกล้อง
 
             return (
                 <div className="fixed inset-0 z-50 bg-gray-900 flex flex-col overflow-hidden h-full w-full">
@@ -1444,27 +1431,31 @@
                         <div className="text-gray-300 mt-1">{dateStr} | {modeName}</div>
                     </div>
                     
-                    <div className="flex-1 flex flex-col items-center justify-center relative p-4 overflow-y-auto">
+                    <div className="flex-1 flex flex-col items-center justify-center relative p-4 overflow-y-auto w-full">
                         
-                        {/* 👇 เพิ่มปุ่มสลับกล้อง 👇 */}
+                        {/* 🚀 [แก้ไข] ย้ายปุ่มสลับกล้องมาเป็นแบบอิสระมุมขวาบนของพื้นที่สแกน เพื่อไม่ให้โดนบังหรือตกขอบ */}
                         <button 
                             onClick={() => {
                                 setStatus("กำลังสลับกล้อง...");
                                 setCameraFacingMode(prev => prev === "environment" ? "user" : "environment");
                             }}
-                            className="mb-4 bg-gray-800/80 hover:bg-gray-700 text-white px-5 py-2.5 rounded-full backdrop-blur-md shadow-lg border border-gray-600 transition flex items-center z-20 font-bold text-sm"
+                            className="absolute top-2 right-2 md:top-4 md:right-4 bg-gray-900/80 hover:bg-black text-ns-yellow px-3 py-2 md:px-4 md:py-2 rounded-full backdrop-blur-md shadow-2xl border-2 border-ns-yellow transition-transform transform hover:scale-105 flex items-center z-[100] font-bold text-xs md:text-sm"
                         >
-                            <i className="fa-solid fa-camera-rotate mr-2"></i> สลับกล้อง (ปัจจุบัน: {cameraFacingMode === 'environment' ? 'กล้องหลัง' : 'กล้องหน้า'})
+                            <i className="fa-solid fa-camera-rotate mr-1 md:mr-2 text-base md:text-lg"></i> 
+                            กล้อง{cameraFacingMode === 'environment' ? 'หน้า' : 'หลัง'}
                         </button>
 
-                        {/* กรอบแสดงภาพจากกล้อง */}
-                        <div id="reader" className="w-full max-w-md bg-black rounded-2xl overflow-hidden border-4 border-ns-blue shadow-2xl flex items-center justify-center min-h-[300px]"></div>
+                        <div className="relative w-full max-w-lg mx-auto flex flex-col items-center">
+                            {/* กรอบแสดงภาพจากกล้อง */}
+                            <div id="reader" className="w-full bg-black rounded-2xl overflow-hidden border-4 border-ns-blue shadow-2xl flex flex-col items-center justify-center min-h-[300px] md:min-h-[400px]"></div>
+                        </div>
+
                         <div className="mt-4 px-6 py-2 bg-black/70 text-white rounded-full backdrop-blur-sm shadow-md animate-pulse z-20 mb-4">
                             <i className="fa-solid fa-location-dot mr-2 text-red-400"></i> {status}
                         </div>
 
                         {/* 👇 ฟอร์มกรอกรหัสด้วยมือ (กรณีสแกนไม่ติด) 👇 */}
-                        <div className="w-full max-w-md bg-gray-800/90 backdrop-blur-md p-4 rounded-xl border border-gray-600 shadow-xl z-20">
+                        <div className="w-full max-w-md bg-gray-800/90 backdrop-blur-md p-4 rounded-xl border border-gray-600 shadow-xl z-20 mt-2">
                             <h3 className="text-ns-yellow font-bold mb-2 text-sm"><i className="fa-solid fa-keyboard mr-2"></i>กรอกรหัสประจำตัว (กรณีไม่สแกน QR)</h3>
                             <div className="flex gap-2">
                                 <input 
@@ -1497,9 +1488,8 @@
                                 </div>
                             )}
                         </div>
-                        {/* 👆 --------------------------------- 👆 */}
 
-                        {/* 🚀 [ย้ายมา] แผงควบคุมระดับเสียง อยู่ล่างฟอร์มกรอกรหัส */}
+                        {/* แผงควบคุมระดับเสียง */}
                         <div className="w-full max-w-md mt-4 bg-gray-800/90 p-3 rounded-xl border border-gray-600 shadow-xl flex items-center justify-between z-20">
                             <span className="text-gray-300 text-sm font-bold"><i className="fa-solid fa-volume-up mr-2"></i>ระดับเสียงสแกน</span>
                             <div className="flex items-center space-x-3 text-white">
@@ -1608,6 +1598,9 @@
             // 🚀 [เพิ่มใหม่] State จัดการระดับเสียงสำหรับกล้องสแกน
             const [volumeLevel, setVolumeLevel] = useState(1.0); // 0.0 ถึง 1.0
             const [isMuted, setIsMuted] = useState(false);
+            
+            // 💡 [แก้ไข] เพิ่ม Reference สำหรับ AudioContext ป้องกันปัญหาเสียงไม่ออก
+            const audioCtxRef = useRef(null);
 
             // 🚀 [เพิ่มใหม่ 2] Effect ตรวจสอบถ้าบันทึกเสร็จหมดแล้ว และผู้ใช้ต้องการปิดกล้อง ให้ปิดอัตโนมัติ
             React.useEffect(() => {
@@ -1627,26 +1620,31 @@
                 }
             }, [pendingSaves, isTryingToCloseScanner]);
 
-            // 🚀 [แก้ไข] ฟังก์ชันสำหรับเล่นเสียง "ติ้ง" เมื่อสแกนและพบข้อมูล ปรับคลื่นเสียงและความดังให้ชัดเจนขึ้นทะลุเสียงรบกวน
+            // 🚀 [แก้ไข] เปลี่ยนเสียงกลับเป็นเสียง "ติ๊ง" แบบเดิม และเสถียรขึ้น
             const playScanBeep = React.useCallback(() => {
                 if (isMuted) return;
                 try {
-                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    const oscillator = audioCtx.createOscillator();
-                    const gainNode = audioCtx.createGain();
+                    if (window.speechSynthesis) window.speechSynthesis.cancel(); // ปิดเสียงพูด "บันทึกสำเร็จ" ถ้ามี
+                    
+                    if (!audioCtxRef.current) {
+                        const AudioContext = window.AudioContext || window.webkitAudioContext;
+                        audioCtxRef.current = new AudioContext();
+                    }
+                    const ctx = audioCtxRef.current;
+                    if (ctx.state === 'suspended') ctx.resume();
+
+                    const oscillator = ctx.createOscillator();
+                    const gainNode = ctx.createGain();
                     oscillator.connect(gainNode);
-                    gainNode.connect(audioCtx.destination);
-                    // เปลี่ยนจาก sine เป็น triangle เสียงจะแหลมและแทรกเสียงรบกวนในสภาพแวดล้อมได้ดีกว่า
-                    oscillator.type = 'triangle'; 
-                    oscillator.frequency.value = 1500; // ความถี่สูงขึ้นให้ดัง "ปิ๊บ" ชัดเจน
-                    // เพิ่ม Gain ให้ดังขึ้น (1.5) เพื่อให้สู้เสียงสภาพแวดล้อมได้
-                    gainNode.gain.setValueAtTime(1.5 * volumeLevel, audioCtx.currentTime);
-                    // ทำให้เสียงสั้นและกระชับ (0.15 วิ)
-                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15); 
-                    oscillator.start(audioCtx.currentTime);
-                    oscillator.stop(audioCtx.currentTime + 0.15);
+                    gainNode.connect(ctx.destination);
+                    oscillator.type = 'sine'; // เสียง ติ๊ง (Sine wave)
+                    oscillator.frequency.setValueAtTime(1000, ctx.currentTime); 
+                    gainNode.gain.setValueAtTime(volumeLevel, ctx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15); 
+                    oscillator.start(ctx.currentTime);
+                    oscillator.stop(ctx.currentTime + 0.15);
                 } catch (e) {
-                    console.log("Audio not supported for beep");
+                    console.log("Audio not supported for beep", e);
                 }
             }, [volumeLevel, isMuted]);
 
@@ -1654,21 +1652,27 @@
             const playErrorBeep = React.useCallback(() => {
                 if (isMuted) return;
                 try {
-                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    const oscillator = audioCtx.createOscillator();
-                    const gainNode = audioCtx.createGain();
+                    if (window.speechSynthesis) window.speechSynthesis.cancel();
+
+                    if (!audioCtxRef.current) {
+                        const AudioContext = window.AudioContext || window.webkitAudioContext;
+                        audioCtxRef.current = new AudioContext();
+                    }
+                    const ctx = audioCtxRef.current;
+                    if (ctx.state === 'suspended') ctx.resume();
+
+                    const oscillator = ctx.createOscillator();
+                    const gainNode = ctx.createGain();
                     oscillator.connect(gainNode);
-                    gainNode.connect(audioCtx.destination);
-                    // เปลี่ยนเป็น sawtooth เสียงจะออกแข็งๆ "ตื๊ดดด" แจ้งเตือนข้อผิดพลาดได้ดีมาก
-                    oscillator.type = 'sawtooth'; 
-                    oscillator.frequency.value = 150; // ความถี่ต่ำ เสียงตื้ด
-                    // เพิ่มระดับความดังจากเดิม 0.3 เป็น 1.5
-                    gainNode.gain.setValueAtTime(1.5 * volumeLevel, audioCtx.currentTime);
-                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
-                    oscillator.start(audioCtx.currentTime);
-                    oscillator.stop(audioCtx.currentTime + 0.5);
+                    gainNode.connect(ctx.destination);
+                    oscillator.type = 'square'; // เสียง ตื้ด
+                    oscillator.frequency.setValueAtTime(250, ctx.currentTime); 
+                    gainNode.gain.setValueAtTime(volumeLevel, ctx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+                    oscillator.start(ctx.currentTime);
+                    oscillator.stop(ctx.currentTime + 0.4);
                 } catch (e) {
-                    console.log("Audio not supported for error beep");
+                    console.log("Audio not supported for error beep", e);
                 }
             }, [volumeLevel, isMuted]);
 
@@ -1851,6 +1855,20 @@
 
             const startScanner = async () => {
                 setIsPreparing(true);
+
+                // 💡 [แก้ไข] สร้างและปลุก AudioContext ทันทีที่ผู้ใช้คลิกปุ่ม "เริ่มสแกน" เพื่อปลดล็อกนโยบายเบราว์เซอร์
+                try {
+                    if (!audioCtxRef.current) {
+                        const AudioContext = window.AudioContext || window.webkitAudioContext;
+                        audioCtxRef.current = new AudioContext();
+                    }
+                    if (audioCtxRef.current.state === 'suspended') {
+                        await audioCtxRef.current.resume();
+                    }
+                } catch (e) {
+                    console.warn("AudioContext init failed", e);
+                }
+
                 if (!hasCamPermission) {
                     try {
                         await navigator.mediaDevices.getUserMedia({ video: true });
@@ -1872,8 +1890,7 @@
                 // ตรวจสอบว่าเป็นสถานะ "สาย" หรือไม่
                 const isLate = newRecord.statusStr === 'สาย';
                 
-                // แจ้งเตือนมุมขวาบน (หรือตรงกลางถ้าสาย) และส่งเสียงติ๊ดให้ครูรู้ตัวทันที
-                playScanBeep();
+                // แจ้งเตือนมุมขวาบน (หรือตรงกลางถ้าสาย)
                 showScanToast(`บันทึก: ${newRecord.name} (${newRecord.statusStr})`, false, isLate);
 
                 try {
@@ -2637,7 +2654,6 @@
                     {showScanner && (
                         <React.Fragment>
                             <ScannerPopup 
-                                // 🚀 [แก้ไข] ส่งต่อการควบคุมไปที่ ScannerPopup
                                 onClose={handleCloseScanner} 
                                 timeSettings={timeSettings} 
                                 onRecordSaved={handleRecordSaved} 
@@ -2650,17 +2666,14 @@
                                 setBehaviorRecords={setBehaviorRecords} 
                                 user={user} 
                                 exemptions={exemptions} 
-                                leaveRecords={leaveRecords} // 💡 ส่งข้อมูลการลาไปเช็ค
-                                // 🚀 [เพิ่มใหม่] ส่งฟังก์ชันและเสียงลงไปให้ ScannerPopup เพื่อรองรับแจ้งเตือนสแกนซ้ำ
+                                leaveRecords={leaveRecords}
                                 onDuplicateScan={handleDuplicateScanFromScanner}
                                 playErrorBeep={playErrorBeep}
                                 playScanBeep={playScanBeep}
-                                // 🚀 [เพิ่มใหม่] ส่ง State ระดับเสียงให้ ScannerPopup รับไปจัดการ
                                 isMuted={isMuted}
                                 setIsMuted={setIsMuted}
                                 volumeLevel={volumeLevel}
                                 setVolumeLevel={setVolumeLevel}
-                                // 🚀 [เพิ่มใหม่] ส่ง Config เพิ่มความเร็วสแกน (ใช้ได้ถ้า ScannerPopup เขียนรองรับ)
                                 scanConfig={{ fps: 20, disableFlip: false, qrbox: { width: 300, height: 300 } }}
                             />
                         </React.Fragment>
@@ -2696,7 +2709,6 @@
                 </div>
             );
         };
-//
 
 // 4. หน้าจัดการพฤติกรรม
        const BehaviorView = ({ students, behaviorsSetting, records, setRecords, user, isSyncing }) => {
