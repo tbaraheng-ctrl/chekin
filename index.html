@@ -1034,18 +1034,22 @@
             const [manualInput, setManualInput] = useState('');
             const [previewStudent, setPreviewStudent] = useState(null);
             const [cameraFacingMode, setCameraFacingMode] = useState("environment");
+            const [isCameraExpanded, setIsCameraExpanded] = useState(false); 
 
-            useEffect(() => {
-                const elem = document.documentElement;
-                if (elem.requestFullscreen) {
-                    elem.requestFullscreen().catch(() => {});
-                } else if (elem.webkitRequestFullscreen) {
-                    elem.webkitRequestFullscreen().catch(() => {});
-                } else if (elem.msRequestFullscreen) {
-                    elem.msRequestFullscreen().catch(() => {});
-                }
-
-                return () => {
+            // 💡 [แก้ไข] ฟังก์ชันสลับโหมดขยายเต็มหน้าจอที่แท้จริง (Browser Fullscreen API)
+            const toggleFullScreen = () => {
+                if (!isCameraExpanded) {
+                    setIsCameraExpanded(true);
+                    const elem = document.documentElement;
+                    if (elem.requestFullscreen) {
+                        elem.requestFullscreen().catch(() => {});
+                    } else if (elem.webkitRequestFullscreen) {
+                        elem.webkitRequestFullscreen().catch(() => {});
+                    } else if (elem.msRequestFullscreen) {
+                        elem.msRequestFullscreen().catch(() => {});
+                    }
+                } else {
+                    setIsCameraExpanded(false);
                     if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
                         if (document.exitFullscreen) {
                             document.exitFullscreen().catch(() => {});
@@ -1055,8 +1059,18 @@
                             document.msExitFullscreen().catch(() => {});
                         }
                     }
-                };
-            }, []);
+                }
+            };
+
+            // 💡 [แก้ไข] ปิดโหมด Fullscreen เมื่อกดปุ่มปิดกล้อง
+            const handleClose = () => {
+                if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
+                    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+                    else if (document.webkitExitFullscreen) document.webkitExitFullscreen().catch(() => {});
+                    else if (document.msExitFullscreen) document.msExitFullscreen().catch(() => {});
+                }
+                onClose();
+            };
             
             const latestRecords = useRef(records);
             const latestStudentList = useRef(studentList);
@@ -1191,7 +1205,6 @@
                         recorder: user ? user.name : 'ระบบอัตโนมัติ'
                     };
                     
-                    // 💡 [แก้ไข] เรียกเสียง "ติ๊ง" ตรงนี้เมื่อสแกนข้อมูลสำเร็จสมบูรณ์
                     if (playScanBeep) playScanBeep();
                     
                     setScanResult(newRecord);
@@ -1326,9 +1339,8 @@
                     try {
                         scanner = new window.Html5Qrcode("reader");
                         
-                        // 💡 [แก้ไข] ปรับความกว้างของกล้องให้เต็มที่ (95%) และบังคับสัดส่วนสี่เหลี่ยมจัตุรัส
                         const config = { 
-                            fps: 10, 
+                            fps: 60, 
                             qrbox: (viewfinderWidth, viewfinderHeight) => {
                                 const minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
                                 return {
@@ -1405,113 +1417,153 @@
 
             return (
                 <div className="fixed inset-0 z-50 bg-gray-900 flex flex-col overflow-hidden h-full w-full">
-                    <div className="bg-ns-blue p-4 flex justify-between items-center shadow-lg relative z-10">
-                        <div className="flex items-center space-x-3">
+                    {/* 🚀 [แก้ไข] แถบเมนูด้านบนสุด */}
+                    <div className="bg-ns-blue p-3 md:p-4 flex justify-between items-center shadow-lg relative z-[10000]">
+                        <div className="flex items-center space-x-2 md:space-x-3 relative z-10">
                             {schoolConfig && schoolConfig.logo ? (
-                                <img src={schoolConfig.logo} alt="Logo" className="w-12 h-12 object-contain" />
+                                <img src={schoolConfig.logo} alt="Logo" className="w-10 h-10 md:w-12 md:h-12 object-contain" />
                             ) : (
-                                <div className="w-12 h-12 bg-ns-yellow rounded-full flex items-center justify-center">
-                                    <i className="fa-solid fa-graduation-cap text-ns-blue text-xl"></i>
+                                <div className="w-10 h-10 md:w-12 md:h-12 bg-ns-yellow rounded-full flex items-center justify-center">
+                                    <i className="fa-solid fa-graduation-cap text-ns-blue text-lg md:text-xl"></i>
                                 </div>
                             )}
-                            <div>
-                                <h1 className="text-xl font-bold text-ns-yellow leading-tight">NS Student Care (NSC)</h1>
-                                <p className="text-xs text-white opacity-80">{schoolConfig && schoolConfig.name}</p>
+                            <div className="hidden sm:block">
+                                <h1 className="text-lg md:text-xl font-bold text-ns-yellow leading-tight">NS Student Care</h1>
+                                <p className="text-[10px] md:text-xs text-white opacity-80">{schoolConfig && schoolConfig.name}</p>
                             </div>
                         </div>
-                        <button onClick={onClose} className="text-white bg-red-500 hover:bg-red-600 rounded-full w-10 h-10 flex items-center justify-center text-xl shadow-lg transition-transform transform hover:scale-105">
-                            <i className="fa-solid fa-times"></i>
-                        </button>
-                    </div>
-
-                    <div className="bg-gray-800 text-center py-4 shadow-inner">
-                        <div className="text-4xl md:text-6xl font-bold text-ns-yellow tracking-wider font-mono">
-                            <RealtimeClock />
-                        </div>
-                        <div className="text-gray-300 mt-1">{dateStr} | {modeName}</div>
-                    </div>
-                    
-                    <div className="flex-1 flex flex-col items-center justify-center relative p-4 overflow-y-auto w-full">
                         
-                        {/* 🚀 [แก้ไข] ย้ายปุ่มสลับกล้องมาเป็นแบบอิสระมุมขวาบนของพื้นที่สแกน เพื่อไม่ให้โดนบังหรือตกขอบ */}
-                        <button 
-                            onClick={() => {
-                                setStatus("กำลังสลับกล้อง...");
-                                setCameraFacingMode(prev => prev === "environment" ? "user" : "environment");
-                            }}
-                            className="absolute top-2 right-2 md:top-4 md:right-4 bg-gray-900/80 hover:bg-black text-ns-yellow px-3 py-2 md:px-4 md:py-2 rounded-full backdrop-blur-md shadow-2xl border-2 border-ns-yellow transition-transform transform hover:scale-105 flex items-center z-[100] font-bold text-xs md:text-sm"
-                        >
-                            <i className="fa-solid fa-camera-rotate mr-1 md:mr-2 text-base md:text-lg"></i> 
-                            กล้อง{cameraFacingMode === 'environment' ? 'หน้า' : 'หลัง'}
-                        </button>
-
-                        <div className="relative w-full max-w-lg mx-auto flex flex-col items-center">
-                            {/* กรอบแสดงภาพจากกล้อง */}
-                            <div id="reader" className="w-full bg-black rounded-2xl overflow-hidden border-4 border-ns-blue shadow-2xl flex flex-col items-center justify-center min-h-[300px] md:min-h-[400px]"></div>
+                        {/* 💡 [แก้ไข] นำนาฬิกาดิจิทัลมาไว้ตรงกลางของแท็บสีน้ำเงินเมื่อผู้ใช้กดขยายเต็มจอ */}
+                        {isCameraExpanded && (
+                            <div className="absolute left-1/2 transform -translate-x-1/2 font-mono font-bold text-ns-yellow text-lg md:text-2xl tracking-wider z-0 flex flex-col items-center">
+                                <RealtimeClock />
+                            </div>
+                        )}
+                        
+                        <div className="flex items-center space-x-1 md:space-x-2 relative z-10">
+                            <button 
+                                onClick={toggleFullScreen}
+                                className="bg-gray-800 text-white hover:bg-black px-3 py-2 rounded-lg shadow-lg transition-transform transform hover:scale-105 flex items-center font-bold text-xs md:text-sm border border-gray-600"
+                            >
+                                {isCameraExpanded ? (
+                                    <span><i className="fa-solid fa-compress text-red-400"></i><span className="hidden md:inline ml-2">ย่อจอ</span></span>
+                                ) : (
+                                    <span><i className="fa-solid fa-expand text-green-400"></i><span className="hidden md:inline ml-2">ขยายจอ</span></span>
+                                )}
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    setStatus("กำลังสลับกล้อง...");
+                                    setCameraFacingMode(prev => prev === "environment" ? "user" : "environment");
+                                }}
+                                className="bg-gray-800 text-ns-yellow hover:bg-black px-3 py-2 rounded-lg shadow-lg transition-transform transform hover:scale-105 flex items-center font-bold text-xs md:text-sm border border-ns-yellow"
+                            >
+                                <i className="fa-solid fa-camera-rotate"></i>
+                                <span className="hidden md:inline ml-2">สลับ</span>
+                            </button>
+                            <button onClick={handleClose} className="text-white bg-red-600 hover:bg-red-700 rounded-lg px-3 py-2 flex items-center justify-center text-xs md:text-sm shadow-lg transition-transform transform hover:scale-105 border border-red-800 font-bold">
+                                <i className="fa-solid fa-times"></i><span className="hidden md:inline ml-2">ปิด</span>
+                            </button>
                         </div>
+                    </div>
 
-                        <div className="mt-4 px-6 py-2 bg-black/70 text-white rounded-full backdrop-blur-sm shadow-md animate-pulse z-20 mb-4">
+                    {/* ซ่อนแถบเวลาด้านล่างเมื่อผู้ใช้กดขยายกล้องเต็มจอ */}
+                    {!isCameraExpanded && (
+                        <div className="bg-gray-800 text-center py-2 md:py-4 shadow-inner">
+                            <div className="text-3xl md:text-6xl font-bold text-ns-yellow tracking-wider font-mono">
+                                <RealtimeClock />
+                            </div>
+                            <div className="text-gray-300 text-xs md:text-base mt-1">{dateStr} | {modeName}</div>
+                        </div>
+                    )}
+                    
+                    <div className={`flex flex-col items-center relative overflow-y-auto w-full ${isCameraExpanded ? 'flex-1 justify-start bg-black p-0' : 'flex-1 justify-center p-4'}`}>
+                        
+                        {/* กล่องใส่ Video */}
+                        <div id="reader" className={`w-full bg-black overflow-hidden flex flex-col items-center justify-center relative ${isCameraExpanded ? 'h-full w-full' : 'max-w-lg rounded-2xl border-4 border-ns-blue shadow-2xl min-h-[300px] md:min-h-[400px]'}`}></div>
+                        
+                        {/* สไตล์บังคับ Video เต็มพื้นที่เมื่อขยายจอ */}
+                        {isCameraExpanded && (
+                            <style>{`
+                                #reader video {
+                                    object-fit: cover !important;
+                                    width: 100% !important;
+                                    height: 100% !important;
+                                    min-width: 100% !important;
+                                    min-height: 100% !important;
+                                }
+                                #qr-shaded-region {
+                                    border-width: 60px !important;
+                                }
+                            `}</style>
+                        )}
+
+                        <div className={`px-4 md:px-6 py-1.5 md:py-2 bg-black/70 text-white rounded-full backdrop-blur-sm shadow-md animate-pulse z-[100] text-xs md:text-sm ${isCameraExpanded ? 'absolute bottom-10 left-1/2 transform -translate-x-1/2' : 'mt-4 mb-4'}`}>
                             <i className="fa-solid fa-location-dot mr-2 text-red-400"></i> {status}
                         </div>
 
-                        {/* 👇 ฟอร์มกรอกรหัสด้วยมือ (กรณีสแกนไม่ติด) 👇 */}
-                        <div className="w-full max-w-md bg-gray-800/90 backdrop-blur-md p-4 rounded-xl border border-gray-600 shadow-xl z-20 mt-2">
-                            <h3 className="text-ns-yellow font-bold mb-2 text-sm"><i className="fa-solid fa-keyboard mr-2"></i>กรอกรหัสประจำตัว (กรณีไม่สแกน QR)</h3>
-                            <div className="flex gap-2">
-                                <input 
-                                    type="text" 
-                                    value={manualInput} 
-                                    onChange={e => {
-                                        setManualInput(e.target.value);
-                                        setPreviewStudent(null);
-                                    }}
-                                    onKeyDown={e => e.key === 'Enter' && handleManualCheck()}
-                                    placeholder="ระบุรหัสประจำตัว..." 
-                                    className="flex-1 px-3 py-2 rounded-lg bg-gray-700 text-white border border-gray-500 focus:border-ns-yellow outline-none font-mono"
-                                />
-                                <button onClick={handleManualCheck} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold transition shadow">ตรวจสอบ</button>
-                            </div>
-                            
-                            {previewStudent && (
-                                <div className="mt-3 p-3 bg-white rounded-lg border-l-4 border-ns-blue flex justify-between items-center animate-[fadeIn_0.2s_ease-out]">
-                                    <div className="text-left">
-                                        <p className="text-ns-blue font-bold text-lg">{previewStudent.name}</p>
-                                        <p className="text-gray-600 text-xs mt-1">รหัส: <span className="font-bold text-gray-800">{previewStudent.code}</span> | ชั้น: <span className="font-bold text-gray-800">{previewStudent.classLevel}/{previewStudent.room}</span></p>
+                        {/* 👇 ฟอร์มกรอกรหัสด้วยมือ (กรณีสแกนไม่ติด) ซ่อนเมื่อขยายจอ 👇 */}
+                        {!isCameraExpanded && (
+                            <div className="w-full flex flex-col items-center">
+                                <div className="w-full max-w-md bg-gray-800/90 backdrop-blur-md p-4 rounded-xl border border-gray-600 shadow-xl z-20 mt-2">
+                                    <h3 className="text-ns-yellow font-bold mb-2 text-sm"><i className="fa-solid fa-keyboard mr-2"></i>กรอกรหัสประจำตัว (กรณีไม่สแกน QR)</h3>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            type="text" 
+                                            value={manualInput} 
+                                            onChange={e => {
+                                                setManualInput(e.target.value);
+                                                setPreviewStudent(null);
+                                            }}
+                                            onKeyDown={e => e.key === 'Enter' && handleManualCheck()}
+                                            placeholder="ระบุรหัสประจำตัว..." 
+                                            className="flex-1 px-3 py-2 rounded-lg bg-gray-700 text-white border border-gray-500 focus:border-ns-yellow outline-none font-mono"
+                                        />
+                                        <button onClick={handleManualCheck} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold transition shadow">ตรวจสอบ</button>
                                     </div>
-                                    <button onClick={() => {
-                                        processScanData(previewStudent.code);
-                                        setManualInput('');
-                                        setPreviewStudent(null);
-                                    }} className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold shadow-md transition ml-2 whitespace-nowrap">
-                                        ยืนยันบันทึก
-                                    </button>
+                                    
+                                    {previewStudent && (
+                                        <div className="mt-3 p-3 bg-white rounded-lg border-l-4 border-ns-blue flex justify-between items-center animate-[fadeIn_0.2s_ease-out]">
+                                            <div className="text-left">
+                                                <p className="text-ns-blue font-bold text-lg">{previewStudent.name}</p>
+                                                <p className="text-gray-600 text-xs mt-1">รหัส: <span className="font-bold text-gray-800">{previewStudent.code}</span> | ชั้น: <span className="font-bold text-gray-800">{previewStudent.classLevel}/{previewStudent.room}</span></p>
+                                            </div>
+                                            <button onClick={() => {
+                                                processScanData(previewStudent.code);
+                                                setManualInput('');
+                                                setPreviewStudent(null);
+                                            }} className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold shadow-md transition ml-2 whitespace-nowrap">
+                                                ยืนยันบันทึก
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
-                            )}
-                        </div>
 
-                        {/* แผงควบคุมระดับเสียง */}
-                        <div className="w-full max-w-md mt-4 bg-gray-800/90 p-3 rounded-xl border border-gray-600 shadow-xl flex items-center justify-between z-20">
-                            <span className="text-gray-300 text-sm font-bold"><i className="fa-solid fa-volume-up mr-2"></i>ระดับเสียงสแกน</span>
-                            <div className="flex items-center space-x-3 text-white">
-                                <button onClick={() => { setIsMuted(!isMuted); if(isMuted) { setTimeout(playScanBeep, 50); } }} className="hover:text-ns-yellow transition-colors text-lg" title="เปิด/ปิดเสียง">
-                                    <i className={`fa-solid ${isMuted ? 'fa-volume-xmark text-red-400' : 'fa-volume-high'}`}></i>
-                                </button>
-                                <div className="flex items-center space-x-2 bg-black/40 rounded-full px-3 py-1 border border-gray-600">
-                                    <button onClick={() => { setVolumeLevel(prev => { const n = Math.max(0, prev - 0.2); return Number(n.toFixed(1)); }); if(!isMuted) { setTimeout(playScanBeep, 50); } }} className="hover:text-ns-yellow transition-colors" title="ลดเสียง">
-                                        <i className="fa-solid fa-minus text-sm"></i>
-                                    </button>
-                                    <span className="text-xs font-bold w-10 text-center">{Math.round(volumeLevel * 100)}%</span>
-                                    <button onClick={() => { setVolumeLevel(prev => { const n = Math.min(1, prev + 0.2); return Number(n.toFixed(1)); }); if(!isMuted) { setTimeout(playScanBeep, 50); } }} className="hover:text-ns-yellow transition-colors" title="เพิ่มเสียง">
-                                        <i className="fa-solid fa-plus text-sm"></i>
-                                    </button>
+                                {/* แผงควบคุมระดับเสียง */}
+                                <div className="w-full max-w-md mt-4 bg-gray-800/90 p-3 rounded-xl border border-gray-600 shadow-xl flex items-center justify-between z-20 mb-6">
+                                    <span className="text-gray-300 text-sm font-bold"><i className="fa-solid fa-volume-up mr-2"></i>ระดับเสียงสแกน</span>
+                                    <div className="flex items-center space-x-3 text-white">
+                                        <button onClick={() => { setIsMuted(!isMuted); if(isMuted) { setTimeout(playScanBeep, 50); } }} className="hover:text-ns-yellow transition-colors text-lg" title="เปิด/ปิดเสียง">
+                                            <i className={`fa-solid ${isMuted ? 'fa-volume-xmark text-red-400' : 'fa-volume-high'}`}></i>
+                                        </button>
+                                        <div className="flex items-center space-x-2 bg-black/40 rounded-full px-3 py-1 border border-gray-600">
+                                            <button onClick={() => { setVolumeLevel(prev => { const n = Math.max(0, prev - 0.2); return Number(n.toFixed(1)); }); if(!isMuted) { setTimeout(playScanBeep, 50); } }} className="hover:text-ns-yellow transition-colors" title="ลดเสียง">
+                                                <i className="fa-solid fa-minus text-sm"></i>
+                                            </button>
+                                            <span className="text-xs font-bold w-10 text-center">{Math.round(volumeLevel * 100)}%</span>
+                                            <button onClick={() => { setVolumeLevel(prev => { const n = Math.min(1, prev + 0.2); return Number(n.toFixed(1)); }); if(!isMuted) { setTimeout(playScanBeep, 50); } }} className="hover:text-ns-yellow transition-colors" title="เพิ่มเสียง">
+                                                <i className="fa-solid fa-plus text-sm"></i>
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-
+                        )}
                     </div>
                     
+                    {/* 💡 [แก้ไข] ปรับ z-index ให้ลอยเหนือกล้องโหมดเต็มจอ (z-[250]) */}
                     {scanResult && (scanResult.statusStr === 'สาย' || exemptInfo) && (
-                        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 transition-opacity">
+                        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 transition-opacity">
                             <div className={`bg-white border-b-8 ${scanResult.statusStr === 'สาย' && !exemptInfo ? 'border-red-500' : 'border-blue-500'} w-full max-w-sm p-6 rounded-2xl shadow-2xl animate-[bounce_0.5s_ease-in-out]`}>
                                 <div className={`flex flex-col items-center ${scanResult.statusStr === 'สาย' && !exemptInfo ? 'text-red-600' : 'text-blue-600'} mb-4 border-b pb-4`}>
                                     <i className={`fa-solid ${scanResult.statusStr === 'สาย' && !exemptInfo ? 'fa-circle-xmark' : 'fa-shield-heart'} text-6xl mb-2 drop-shadow-md`}></i>
@@ -1557,8 +1609,9 @@
                         </div>
                     )}
 
+                    {/* 💡 [แก้ไข] ปรับ z-index ให้ลอยเหนือกล้องโหมดเต็มจอ (z-[260]) */}
                     {duplicateError && (
-                        <div className="fixed top-6 right-6 z-[100] bg-white border-l-8 shadow-2xl rounded-xl p-4 flex items-center min-w-[280px] border-red-500 animate-[bounce_0.3s_ease-in-out]">
+                        <div className="fixed top-6 right-6 z-[260] bg-white border-l-8 shadow-2xl rounded-xl p-4 flex items-center min-w-[280px] border-red-500 animate-[bounce_0.3s_ease-in-out]">
                             <i className="fa-solid fa-triangle-exclamation text-red-500 text-3xl mr-3"></i>
                             <div>
                                 <h4 className="font-bold text-gray-800">สแกนซ้ำ!</h4>
@@ -2674,7 +2727,7 @@
                                 setIsMuted={setIsMuted}
                                 volumeLevel={volumeLevel}
                                 setVolumeLevel={setVolumeLevel}
-                                scanConfig={{ fps: 20, disableFlip: false, qrbox: { width: 300, height: 300 } }}
+                                scanConfig={{ fps: 60, disableFlip: false, qrbox: { width: 300, height: 300 } }}
                             />
                         </React.Fragment>
                     )}
@@ -2697,8 +2750,9 @@
                         </div>
                     )}
 
+                    {/* 💡 [แก้ไข] ปรับ z-index ให้ลอยเหนือกล้องโหมดเต็มจอ (z-[260]) */}
                     {duplicateError && (
-                        <div className="fixed top-6 right-6 z-[100] bg-white border-l-8 shadow-2xl rounded-xl p-4 flex items-center min-w-[280px] border-red-500 animate-[bounce_0.3s_ease-in-out]">
+                        <div className="fixed top-6 right-6 z-[260] bg-white border-l-8 shadow-2xl rounded-xl p-4 flex items-center min-w-[280px] border-red-500 animate-[bounce_0.3s_ease-in-out]">
                             <i className="fa-solid fa-triangle-exclamation text-red-500 text-3xl mr-3"></i>
                             <div>
                                 <h4 className="font-bold text-gray-800">ข้อมูลซ้ำ!</h4>
