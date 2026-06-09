@@ -1023,7 +1023,7 @@
             );
         };
 
-        // 2. หน้าสแกนเวลาเข้า-ออก
+        // // 2. หน้าสแกนเวลาเข้า-ออก
         const ScannerPopup = ({ onClose, timeSettings, onRecordSaved, records, currentGps, studentList, schoolConfig, behaviorsSetting, behaviorRecords, setBehaviorRecords, user, exemptions, leaveRecords, onDuplicateScan, playErrorBeep, playScanBeep, isMuted, setIsMuted, volumeLevel, setVolumeLevel }) => {
             const [status, setStatus] = useState("กำลังเตรียมกล้อง...");
             const [scanResult, setScanResult] = useState(null);
@@ -1036,38 +1036,53 @@
             const [cameraFacingMode, setCameraFacingMode] = useState("environment");
             const [isCameraExpanded, setIsCameraExpanded] = useState(false); 
 
-            // 💡 [แก้ไข] ฟังก์ชันสลับโหมดขยายเต็มหน้าจอที่แท้จริง (Browser Fullscreen API)
+            // 💡 [แก้ไข] ฟังก์ชันสลับโหมดขยายเต็มหน้าจอที่แท้จริง รองรับทุกเบราว์เซอร์ (แก้บั๊ก Safari)
             const toggleFullScreen = () => {
-                if (!isCameraExpanded) {
-                    setIsCameraExpanded(true);
-                    const elem = document.documentElement;
-                    if (elem.requestFullscreen) {
-                        elem.requestFullscreen().catch(() => {});
-                    } else if (elem.webkitRequestFullscreen) {
-                        elem.webkitRequestFullscreen().catch(() => {});
-                    } else if (elem.msRequestFullscreen) {
-                        elem.msRequestFullscreen().catch(() => {});
-                    }
-                } else {
-                    setIsCameraExpanded(false);
-                    if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
-                        if (document.exitFullscreen) {
-                            document.exitFullscreen().catch(() => {});
-                        } else if (document.webkitExitFullscreen) {
-                            document.webkitExitFullscreen().catch(() => {});
-                        } else if (document.msExitFullscreen) {
-                            document.msExitFullscreen().catch(() => {});
+                try {
+                    if (!isCameraExpanded) {
+                        setIsCameraExpanded(true);
+                        const elem = document.documentElement;
+                        if (elem.requestFullscreen) {
+                            const p = elem.requestFullscreen();
+                            if (p) p.catch(e => console.log(e));
+                        } else if (elem.webkitRequestFullscreen) {
+                            elem.webkitRequestFullscreen();
+                        } else if (elem.msRequestFullscreen) {
+                            elem.msRequestFullscreen();
+                        }
+                    } else {
+                        setIsCameraExpanded(false);
+                        if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
+                            if (document.exitFullscreen) {
+                                const p = document.exitFullscreen();
+                                if (p) p.catch(e => console.log(e));
+                            } else if (document.webkitExitFullscreen) {
+                                document.webkitExitFullscreen();
+                            } else if (document.msExitFullscreen) {
+                                document.msExitFullscreen();
+                            }
                         }
                     }
+                } catch (err) {
+                    console.log("Fullscreen API Error:", err);
                 }
             };
 
-            // 💡 [แก้ไข] ปิดโหมด Fullscreen เมื่อกดปุ่มปิดกล้อง
+            // 💡 [แก้ไข] ปิดโหมด Fullscreen เมื่อกดปุ่มปิดกล้อง อย่างปลอดภัย
             const handleClose = () => {
-                if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
-                    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-                    else if (document.webkitExitFullscreen) document.webkitExitFullscreen().catch(() => {});
-                    else if (document.msExitFullscreen) document.msExitFullscreen().catch(() => {});
+                try {
+                    if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
+                        if (document.exitFullscreen) {
+                            const p = document.exitFullscreen();
+                            if (p) p.catch(e => console.log(e));
+                        } else if (document.webkitExitFullscreen) {
+                            document.webkitExitFullscreen();
+                        } else if (document.msExitFullscreen) {
+                            document.msExitFullscreen();
+                        }
+                    }
+                } catch (err) {
+                    console.log(err);
                 }
                 onClose();
             };
@@ -1337,18 +1352,17 @@
                     if (isUnmounted) return;
 
                     try {
-                        scanner = new window.Html5Qrcode("reader");
+                        // 💡 [แก้ไข] 1. บังคับอ่านเฉพาะ QR Code และ 2. เปิดใช้ Native Barcode Detector (ถ้ามือถือรองรับจะสแกนไวระดับเสี้ยววินาที)
+                        const qrFormats = window.Html5QrcodeSupportedFormats ? [window.Html5QrcodeSupportedFormats.QR_CODE] : undefined;
+                        scanner = new window.Html5Qrcode("reader", { 
+                            formatsToSupport: qrFormats,
+                            experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                        });
                         
+                        // 💡 [แก้ไข] ปลดล็อคข้อจำกัดของกรอบสแกน (ตัด qrbox ออก) เพื่อให้กล้องอ่านแบบ "เต็มเฟรมวิดีโอ"
+                        // ทันทีที่ QR Code โผล่เข้ามาในหน้าจอ ไม่ว่าจะมุมไหน ระบบจะจับได้ทันทีโดยไม่ต้องพยายามเล็งให้อยู่ตรงกลาง
                         const config = { 
-                            fps: 60, 
-                            qrbox: (viewfinderWidth, viewfinderHeight) => {
-                                const minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
-                                return {
-                                    width: Math.floor(minEdgeSize * 0.95),
-                                    height: Math.floor(minEdgeSize * 0.95)
-                                };
-                            },
-                            aspectRatio: 1.0,
+                            fps: 30, // ใช้ 30 เฟรม เพื่อให้เครื่องประมวลผลได้ลื่นไหล ไม่ค้าง
                             disableFlip: false 
                         };
                         
@@ -1417,7 +1431,6 @@
 
             return (
                 <div className="fixed inset-0 z-50 bg-gray-900 flex flex-col overflow-hidden h-full w-full">
-                    {/* 🚀 [แก้ไข] แถบเมนูด้านบนสุด */}
                     <div className="bg-ns-blue p-3 md:p-4 flex justify-between items-center shadow-lg relative z-[10000]">
                         <div className="flex items-center space-x-2 md:space-x-3 relative z-10">
                             {schoolConfig && schoolConfig.logo ? (
@@ -1433,7 +1446,6 @@
                             </div>
                         </div>
                         
-                        {/* 💡 [แก้ไข] นำนาฬิกาดิจิทัลมาไว้ตรงกลางของแท็บสีน้ำเงินเมื่อผู้ใช้กดขยายเต็มจอ */}
                         {isCameraExpanded && (
                             <div className="absolute left-1/2 transform -translate-x-1/2 font-mono font-bold text-ns-yellow text-lg md:text-2xl tracking-wider z-0 flex flex-col items-center">
                                 <RealtimeClock />
@@ -1467,7 +1479,6 @@
                         </div>
                     </div>
 
-                    {/* ซ่อนแถบเวลาด้านล่างเมื่อผู้ใช้กดขยายกล้องเต็มจอ */}
                     {!isCameraExpanded && (
                         <div className="bg-gray-800 text-center py-2 md:py-4 shadow-inner">
                             <div className="text-3xl md:text-6xl font-bold text-ns-yellow tracking-wider font-mono">
@@ -1479,10 +1490,8 @@
                     
                     <div className={`flex flex-col items-center relative overflow-y-auto w-full ${isCameraExpanded ? 'flex-1 justify-start bg-black p-0' : 'flex-1 justify-center p-4'}`}>
                         
-                        {/* กล่องใส่ Video */}
                         <div id="reader" className={`w-full bg-black overflow-hidden flex flex-col items-center justify-center relative ${isCameraExpanded ? 'h-full w-full' : 'max-w-lg rounded-2xl border-4 border-ns-blue shadow-2xl min-h-[300px] md:min-h-[400px]'}`}></div>
                         
-                        {/* สไตล์บังคับ Video เต็มพื้นที่เมื่อขยายจอ */}
                         {isCameraExpanded && (
                             <style>{`
                                 #reader video {
@@ -1502,7 +1511,6 @@
                             <i className="fa-solid fa-location-dot mr-2 text-red-400"></i> {status}
                         </div>
 
-                        {/* 👇 ฟอร์มกรอกรหัสด้วยมือ (กรณีสแกนไม่ติด) ซ่อนเมื่อขยายจอ 👇 */}
                         {!isCameraExpanded && (
                             <div className="w-full flex flex-col items-center">
                                 <div className="w-full max-w-md bg-gray-800/90 backdrop-blur-md p-4 rounded-xl border border-gray-600 shadow-xl z-20 mt-2">
@@ -1539,7 +1547,6 @@
                                     )}
                                 </div>
 
-                                {/* แผงควบคุมระดับเสียง */}
                                 <div className="w-full max-w-md mt-4 bg-gray-800/90 p-3 rounded-xl border border-gray-600 shadow-xl flex items-center justify-between z-20 mb-6">
                                     <span className="text-gray-300 text-sm font-bold"><i className="fa-solid fa-volume-up mr-2"></i>ระดับเสียงสแกน</span>
                                     <div className="flex items-center space-x-3 text-white">
@@ -1561,7 +1568,6 @@
                         )}
                     </div>
                     
-                    {/* 💡 [แก้ไข] ปรับ z-index ให้ลอยเหนือกล้องโหมดเต็มจอ (z-[250]) */}
                     {scanResult && (scanResult.statusStr === 'สาย' || exemptInfo) && (
                         <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 transition-opacity">
                             <div className={`bg-white border-b-8 ${scanResult.statusStr === 'สาย' && !exemptInfo ? 'border-red-500' : 'border-blue-500'} w-full max-w-sm p-6 rounded-2xl shadow-2xl animate-[bounce_0.5s_ease-in-out]`}>
@@ -1609,7 +1615,6 @@
                         </div>
                     )}
 
-                    {/* 💡 [แก้ไข] ปรับ z-index ให้ลอยเหนือกล้องโหมดเต็มจอ (z-[260]) */}
                     {duplicateError && (
                         <div className="fixed top-6 right-6 z-[260] bg-white border-l-8 shadow-2xl rounded-xl p-4 flex items-center min-w-[280px] border-red-500 animate-[bounce_0.3s_ease-in-out]">
                             <i className="fa-solid fa-triangle-exclamation text-red-500 text-3xl mr-3"></i>
@@ -1644,18 +1649,14 @@
             const [deletingRecordId, setDeletingRecordId] = useState(null);
             const [isDeleting, setIsDeleting] = useState(false);
 
-            // 🚀 [เพิ่มใหม่ 1] State สำหรับจัดการสถานะการบันทึกเบื้องหลัง
             const [pendingSaves, setPendingSaves] = useState(0);
             const [isTryingToCloseScanner, setIsTryingToCloseScanner] = useState(false);
 
-            // 🚀 [เพิ่มใหม่] State จัดการระดับเสียงสำหรับกล้องสแกน
-            const [volumeLevel, setVolumeLevel] = useState(1.0); // 0.0 ถึง 1.0
+            const [volumeLevel, setVolumeLevel] = useState(1.0); // เริ่มต้นความดังที่ 100%
             const [isMuted, setIsMuted] = useState(false);
             
-            // 💡 [แก้ไข] เพิ่ม Reference สำหรับ AudioContext ป้องกันปัญหาเสียงไม่ออก
             const audioCtxRef = useRef(null);
 
-            // 🚀 [เพิ่มใหม่ 2] Effect ตรวจสอบถ้าบันทึกเสร็จหมดแล้ว และผู้ใช้ต้องการปิดกล้อง ให้ปิดอัตโนมัติ
             React.useEffect(() => {
                 if (isTryingToCloseScanner && pendingSaves === 0) {
                     setShowScanner(false);
@@ -1673,11 +1674,11 @@
                 }
             }, [pendingSaves, isTryingToCloseScanner]);
 
-            // 🚀 [แก้ไข] เปลี่ยนเสียงกลับเป็นเสียง "ติ๊ง" แบบเดิม และเสถียรขึ้น
+            // 💡 [แก้ไข] ปรับแต่งคลื่นเสียงเป็น 'triangle' เพื่อให้เสียงใสและดังฟังชัดทะลุมือถือ (เร่ง 200%)
             const playScanBeep = React.useCallback(() => {
                 if (isMuted) return;
                 try {
-                    if (window.speechSynthesis) window.speechSynthesis.cancel(); // ปิดเสียงพูด "บันทึกสำเร็จ" ถ้ามี
+                    if (window.speechSynthesis) window.speechSynthesis.cancel(); 
                     
                     if (!audioCtxRef.current) {
                         const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -1690,10 +1691,15 @@
                     const gainNode = ctx.createGain();
                     oscillator.connect(gainNode);
                     gainNode.connect(ctx.destination);
-                    oscillator.type = 'sine'; // เสียง ติ๊ง (Sine wave)
-                    oscillator.frequency.setValueAtTime(1000, ctx.currentTime); 
-                    gainNode.gain.setValueAtTime(volumeLevel, ctx.currentTime);
+                    
+                    oscillator.type = 'triangle'; 
+                    oscillator.frequency.setValueAtTime(800, ctx.currentTime); 
+                    oscillator.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.1); 
+                    
+                    const actualVolume = volumeLevel > 0 ? Math.max(volumeLevel, 0.5) * 2.0 : 0; 
+                    gainNode.gain.setValueAtTime(actualVolume, ctx.currentTime);
                     gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15); 
+                    
                     oscillator.start(ctx.currentTime);
                     oscillator.stop(ctx.currentTime + 0.15);
                 } catch (e) {
@@ -1701,7 +1707,7 @@
                 }
             }, [volumeLevel, isMuted]);
 
-            // 🚀 [แก้ไข] ฟังก์ชันสำหรับเล่นเสียง "ตื้ด" เมื่อสแกนซ้ำหรือผิดพลาด ปรับคลื่นเสียงและความดังให้ชัดเจนขึ้น
+            // 💡 [แก้ไข] ปรับแต่งคลื่นเสียงเป็น 'sawtooth' สำหรับแจ้งเตือนข้อผิดพลาด ให้สั่นสะเทือนดังฟังชัด
             const playErrorBeep = React.useCallback(() => {
                 if (isMuted) return;
                 try {
@@ -1718,10 +1724,14 @@
                     const gainNode = ctx.createGain();
                     oscillator.connect(gainNode);
                     gainNode.connect(ctx.destination);
-                    oscillator.type = 'square'; // เสียง ตื้ด
+                    
+                    oscillator.type = 'sawtooth'; 
                     oscillator.frequency.setValueAtTime(250, ctx.currentTime); 
-                    gainNode.gain.setValueAtTime(volumeLevel, ctx.currentTime);
+                    
+                    const actualVolume = volumeLevel > 0 ? Math.max(volumeLevel, 0.5) * 2.0 : 0;
+                    gainNode.gain.setValueAtTime(actualVolume, ctx.currentTime);
                     gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+                    
                     oscillator.start(ctx.currentTime);
                     oscillator.stop(ctx.currentTime + 0.4);
                 } catch (e) {
@@ -1729,11 +1739,9 @@
                 }
             }, [volumeLevel, isMuted]);
 
-            // 🚀 [แก้ไข 4] ฟังก์ชันแสดง Popup แจ้งเตือน: บังคับมุมขวาบน 1 วิ (Toast), ถ้าสายให้อยู่ตรงกลางเหมือนเดิม
             const showScanToast = React.useCallback((message, isError = false, isLate = false) => {
                 if (window.Swal) {
                     if (isLate) {
-                        // กรณีมาสาย แสดงตรงกลางจอ 2 วินาที แบบ Popup ปกติ
                         window.Swal.fire({
                             icon: 'warning',
                             title: 'มาสาย!',
@@ -1744,7 +1752,6 @@
                             customClass: { popup: 'animate__animated animate__bounceIn' }
                         });
                     } else {
-                        // 🚀 [แก้ไขที่นี่] ใช้ Mixin เพื่อบังคับให้เป็น Toast มุมขวาบนอย่างสมบูรณ์ และแสดงเพียง 1 วินาที
                         const Toast = window.Swal.mixin({
                             toast: true,
                             position: 'top-end',
@@ -1761,18 +1768,16 @@
                 }
             }, []);
 
-            // 🚀 [เพิ่มใหม่] ฟังก์ชันรองรับกรณีที่ ScannerPopup ยิงอีเวนต์สแกนซ้ำมาให้
             const handleDuplicateScanFromScanner = React.useCallback((studentName) => {
                 playErrorBeep();
                 setDuplicateError(`สแกนซ้ำ!\nคุณได้บันทึกข้อมูลของ ${studentName || 'นักเรียน'} แล้วก่อนหน้านี้`);
                 setTimeout(() => { setDuplicateError(null); }, 1000);
             }, [playErrorBeep]);
 
-            // 🚀 [ปรับปรุงความเร็วสูงสุด]: สร้าง Index ของข้อมูลชั้นเรียนและห้องครั้งเดียว
             const classRoomMap = React.useMemo(() => {
                 const classSet = new Set();
-                const roomMap = {}; //เก็บห้องของแต่ละชั้น
-                const studentGroup = {}; //เก็บนักเรียนแยกตาม ชั้น_ห้อง
+                const roomMap = {}; 
+                const studentGroup = {}; 
 
                 for (let i = 0; i < studentList.length; i++) {
                     const s = studentList[i];
@@ -1788,7 +1793,6 @@
                     }
                 }
 
-                // แปลง Set กลับเป็น Array และจัดเรียงให้สวยงาม
                 const sortedClasses = [...classSet].sort();
                 const sortedRooms = {};
                 for (const cls in roomMap) {
@@ -1802,23 +1806,19 @@
                 };
             }, [studentList]);
 
-            // ดึงข้อมูลชั้นเรียนที่จัดเรียงแล้ว
             const uniqueClasses = classRoomMap.classes;
 
-            // ดึงข้อมูลห้องเรียนเฉพาะชั้นที่เลือก
             const uniqueRooms = React.useMemo(() => {
                 if (!selectedClass) return [];
                 return classRoomMap.rooms[selectedClass] || [];
             }, [classRoomMap, selectedClass]);
 
-            // ดึงรายชื่อนักเรียนเฉพาะชั้นเรียนและห้องเรียนที่เลือกแบบรวดเร็ว
             const classStudents = React.useMemo(() => {
                 if (!selectedClass || !selectedRoom) return [];
                 const groupKey = `${selectedClass}_${selectedRoom}`;
                 return classRoomMap.students[groupKey] || [];
             }, [classRoomMap, selectedClass, selectedRoom]);
 
-            // 🚀 [ปรับปรุงความเร็ว]: ดึงข้อมูลสถิติลืมบัตรแบบรวดเร็ว
             const forgotCardCount = React.useMemo(() => {
                 if (!selectedStudentForManual || !forgotCardRecords) return 1;
                 const targetCode = String(selectedStudentForManual.code).trim();
@@ -1831,7 +1831,6 @@
                 return count + 1;
             }, [forgotCardRecords, selectedStudentForManual]);
 
-            // ฟังก์ชันแปลงฟอร์แมตวันที่แบบแคชประสิทธิภาพสูง
             const cachedDisplayDates = useRef({});
             const formatDisplayDateCached = (dateStr) => {
                 if (!dateStr) return '';
@@ -1866,7 +1865,6 @@
                 return finalResult;
             };
 
-            // ฟังก์ชันจัดรูปแบบเวลาให้เป็น HH:mm
             const formatDisplayTime = (timeStr) => {
                 if (!timeStr) return '';
                 if (typeof timeStr === 'string' && !timeStr.includes('T')) return timeStr.substring(0, 5);
@@ -1885,12 +1883,10 @@
                 return `${day}/${month}/${year}`;
             }, []);
 
-            // 🚀 [เพิ่มใหม่] State สำหรับจัดการตัวกรองในตาราง
             const [filterClass, setFilterClass] = useState('');
             const [filterRoom, setFilterRoom] = useState('');
             const [filterType, setFilterType] = useState('');
 
-            // 🚀 [แก้ปัญหาเครื่องหน่วง/ค้าง]: กรองข้อมูลในตารางให้แสดงเฉพาะ "รายการล่าสุด 100 รายการของวันนี้" พร้อมระบบตัวกรอง
             const displayRecords = React.useMemo(() => {
                 return records
                     .filter(r => formatDisplayDateCached(r.date) === dateStr)
@@ -1909,7 +1905,7 @@
             const startScanner = async () => {
                 setIsPreparing(true);
 
-                // 💡 [แก้ไข] สร้างและปลุก AudioContext ทันทีที่ผู้ใช้คลิกปุ่ม "เริ่มสแกน" เพื่อปลดล็อกนโยบายเบราว์เซอร์
+                // 💡 [แก้ไข] ปลดล็อก Audio Context ให้เบราว์เซอร์เตรียมพร้อมสำหรับเล่นเสียง ทันทีที่ผู้ใช้คลิก
                 try {
                     if (!audioCtxRef.current) {
                         const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -1918,6 +1914,14 @@
                     if (audioCtxRef.current.state === 'suspended') {
                         await audioCtxRef.current.resume();
                     }
+                    const ctx = audioCtxRef.current;
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    gain.gain.value = 0; 
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start(ctx.currentTime);
+                    osc.stop(ctx.currentTime + 0.001);
                 } catch (e) {
                     console.warn("AudioContext init failed", e);
                 }
@@ -1936,20 +1940,15 @@
                 setShowScanner(true);
             };
 
-            // 🚀 [ปรับปรุงฟังก์ชัน] จัดการเมื่อสแกนและบันทึกเสร็จ
             const handleRecordSaved = async (newRecord) => {
                 setRecords(prev => [newRecord, ...prev]);
                 
-                // ตรวจสอบว่าเป็นสถานะ "สาย" หรือไม่
                 const isLate = newRecord.statusStr === 'สาย';
                 
-                // แจ้งเตือนมุมขวาบน (หรือตรงกลางถ้าสาย)
                 showScanToast(`บันทึก: ${newRecord.name} (${newRecord.statusStr})`, false, isLate);
 
                 try {
-                    // เริ่มนับการบันทึกเบื้องหลัง
                     setPendingSaves(prev => prev + 1); 
-                    // 💡 รับ docId และ chunkIndex มาจาก Firebase ทันทีที่เซฟสำเร็จ
                     const res = await saveTimeToFirebase(newRecord);
                     if (res && res.status === 'success') {
                         setRecords(prev => prev.map(r => r.id === newRecord.id ? { ...r, docId: res.docId, chunkIndex: res.chunkIndex } : r));
@@ -1958,12 +1957,10 @@
                     console.log("บันทึกเบื้องหลังล้มเหลว", e);
                     showScanToast(`บันทึกเบื้องหลังล้มเหลว: ${newRecord.name}`, true);
                 } finally {
-                    // หักลบจำนวนการบันทึกเมื่อเสร็จสิ้นกระบวนการ
                     setPendingSaves(prev => Math.max(0, prev - 1));
                 }
             };
 
-            // 🚀 [เพิ่มใหม่ 5] ฟังก์ชันจัดการการปิดกล้อง ป้องกันการปิดถ้าเน็ตช้าและบันทึกยังไม่เสร็จ
             const handleCloseScanner = () => {
                 if (pendingSaves > 0) {
                     setIsTryingToCloseScanner(true);
@@ -1992,20 +1989,16 @@
                 const recordToDelete = records.find(r => r.id === deletingRecordId);
                 
                 try {
-                    // ลบข้อมูลออกจาก Firebase (ทำตามคำขอ: ไม่ยึดติดกับ google sheet)
                     if (window.db && recordToDelete) {
                         if (recordToDelete.docId && recordToDelete.chunkIndex) {
-                            // ลบข้อมูลรูปแบบใหม่ (Chunk)
                             const docRef = window.db.collection('room_records').doc(recordToDelete.docId);
                             await docRef.update({
                                 [recordToDelete.chunkIndex]: firebase.firestore.FieldValue.delete()
                             });
                         } else {
-                            // รองรับกรณีข้อมูลเป็นรูปแบบเก่า
                             await window.db.collection("time_records").doc(String(deletingRecordId)).delete();
                         }
 
-                        // 🚀 [แก้ไขเพิ่ม] ลบประวัติพฤติกรรมอัตโนมัติ (มาสาย) ใน Firebase หากมี
                         if (recordToDelete.statusStr === 'สาย') {
                             const safeDate = recordToDelete.date.replace(/\//g, '-');
                             const bDocRef = window.db.collection('behavior_records').doc(safeDate);
@@ -2013,7 +2006,6 @@
                             
                             if (bDocSnap.exists) {
                                 const bRecords = bDocSnap.data().records || [];
-                                // 💡 [แก้ไข] ค้นหารายการพฤติกรรมสาย โดยรองรับคีย์ภาษาไทยจาก Firebase และชื่อผู้บันทึก
                                 const targetsToDelete = bRecords.filter(r => 
                                     String(r.studentId || r['เลขประจำตัว']) === String(recordToDelete.studentId) &&
                                     String(r.behaviorName || r['รายการพฤติกรรม']).includes('สาย') &&
@@ -2037,7 +2029,6 @@
                     console.error("มีปัญหาในการลบข้อมูลจาก Firebase: ", e);
                 }
 
-                // ลบออกจาก UI ทันที
                 setRecords(records.filter(r => r.id !== deletingRecordId));
                 setIsDeleting(false);
                 setDeletingRecordId(null);
@@ -2046,14 +2037,11 @@
             const saveEdit = async (e) => {
                 e.preventDefault();
                 if(window.confirm("คุณต้องการบันทึกการแก้ไขนี้ลงฐานข้อมูลใช่หรือไม่?")) {
-                    // เก็บข้อมูลเดิมก่อนอัปเดตเพื่อตรวจสอบว่าสถานะเปลี่ยนหรือไม่
                     const originalRecord = records.find(r => r.id === editingRecord.id);
                     setRecords(records.map(r => r.id === editingRecord.id ? editingRecord : r));
                     try {
-                        // 💡 อัปเดตข้อมูลบน Firebase (รองรับข้อมูลทั้งแบบเก่าและแบบใหม่)
                         if (window.db) {
                             if (editingRecord.docId && editingRecord.chunkIndex) {
-                                // อัปเดตข้อมูลรูปแบบ Chunk
                                 const docRef = window.db.collection('room_records').doc(editingRecord.docId);
                                 const updatedData = {
                                     "ID อ้างอิง": Number(editingRecord.id),
@@ -2069,21 +2057,17 @@
                                     [editingRecord.chunkIndex]: updatedData
                                 });
                             } else {
-                                // อัปเดตข้อมูลรูปแบบเก่าที่ไม่มี Chunk
                                 await window.db.collection("time_records").doc(String(editingRecord.id)).set(editingRecord, { merge: true });
                             }
 
-                            // 🚀 [แก้ไขเพิ่ม] อัปเดตพฤติกรรมอัตโนมัติใน Firebase เมื่อมีการเปลี่ยนสถานะ
                             if (originalRecord && originalRecord.statusStr !== editingRecord.statusStr) {
                                 const safeDate = editingRecord.date.replace(/\//g, '-');
                                 const bDocRef = window.db.collection('behavior_records').doc(safeDate);
                                 
-                                // 1. เปลี่ยนจาก 'สาย' เป็นสถานะอื่น -> ลบพฤติกรรมมาสายออก
                                 if (originalRecord.statusStr === 'สาย' && editingRecord.statusStr !== 'สาย') {
                                     const bDocSnap = await bDocRef.get();
                                     if (bDocSnap.exists) {
                                         const bRecords = bDocSnap.data().records || [];
-                                        // 💡 [แก้ไข] ค้นหารายการพฤติกรรมสาย โดยรองรับคีย์ภาษาไทยจาก Firebase และชื่อผู้บันทึก
                                         const targetsToDelete = bRecords.filter(r => 
                                             String(r.studentId || r['เลขประจำตัว']) === String(editingRecord.studentId) &&
                                             String(r.behaviorName || r['รายการพฤติกรรม']).includes('สาย') &&
@@ -2098,10 +2082,8 @@
                                     }
                                 }
                                 
-                                // 2. เปลี่ยนจากสถานะอื่น เป็น 'สาย' -> หักคะแนนอัตโนมัติเพิ่ม
                                 if (originalRecord.statusStr !== 'สาย' && editingRecord.statusStr === 'สาย' && editingRecord.type === 'เข้า') {
                                     const autoScoreSettings = schoolConfig && schoolConfig.autoScoreSettings ? schoolConfig.autoScoreSettings : {};
-                                    // หากโรงเรียนเปิดใช้งานออโต้คะแนนมาสายไว้
                                     if (autoScoreSettings.school_late === true) {
                                         const pastLates = records.filter(r => String(r.studentId).trim() === String(editingRecord.studentId).trim() && String(r.type).trim() === 'เข้า' && String(r.statusStr).trim() === 'สาย' && r.id !== editingRecord.id);
                                         const lateCount = pastLates.length + 1; 
@@ -2178,7 +2160,6 @@
                 const { isOutMode, isLate: scanIsLate } = determineModeAndLate(scanTimeStr, timeSettings.startIn, timeSettings.lateTime, timeSettings.startOut);
                 let currentType = isOutMode ? "ออก" : "เข้า";
 
-                // 🚀 [แก้ไข] ฟังก์ชันเทียบรหัสแบบยืดหยุ่น สำหรับฟอร์มกรอกมือ
                 const isMatchId = (id1, id2) => {
                     if (!id1 || !id2) return false;
                     const s1 = String(id1).replace(/^0+/, '').trim();
@@ -2186,7 +2167,6 @@
                     return s1 === s2 && s1 !== '';
                 };
 
-                // 🚀 [แก้ไข] ระบบ Auto-Correct ป้องกันบัคแจ้งซ้ำตอนเลิกเรียน สำหรับการกรอกรหัสด้วยมือ
                 const currentHourNum = scanNow.getHours();
                 const studentCodeToCompare = String(studentToSave.code);
                 const hasScannedInToday = records.some(r => isMatchId(r.studentId, studentCodeToCompare) && formatDisplayDateCached(r.date) === scanDateStr && r.type === 'เข้า');
@@ -2195,15 +2175,13 @@
                     currentType = "ออก";
                 }
 
-                // 🚀 [แก้ไข] เพิ่มการตรวจสอบ "ช่วงวันที่" ของใบอนุญาตยกเว้นสาย
                 const studentExemption = (exemptions || []).find(ex => {
                     if (!isMatchId(ex.studentId, studentCodeToCompare)) return false;
-                    if (!ex.startDate || !ex.endDate) return formatDisplayDateCached(ex.date) === scanDateStr; // รองรับข้อมูลเก่า
+                    if (!ex.startDate || !ex.endDate) return formatDisplayDateCached(ex.date) === scanDateStr; 
                     const scanISO = `${scanNow.getFullYear()}-${String(scanNow.getMonth() + 1).padStart(2, '0')}-${String(scanNow.getDate()).padStart(2, '0')}`;
                     return scanISO >= ex.startDate && scanISO <= ex.endDate;
                 });
                 
-                // 💡 [เพิ่มใหม่] ตรวจสอบประวัติการลา สำหรับยกเว้นสายเมื่อกรอกรหัสด้วยมือ
                 const studentLeave = (leaveRecords || []).find(l => 
                     isMatchId(l.studentId, studentCodeToCompare) && 
                     formatDisplayDateCached(l.date) === scanDateStr
@@ -2224,7 +2202,6 @@
                 }
                 const finalStatusStr = isLeaveExempted ? "ปกติ" : (isExempted ? "ยกเว้นสาย" : (scanIsLate ? "สาย" : "ปกติ"));
 
-                // 🚀 [ปรับปรุงความเร็วสูงสุด]: ค้นหาการบันทึกซ้ำซ้อนด้วยลูป For ปกติที่เร็วที่สุด
                 let isDuplicate = false;
                 for (let i = 0; i < records.length; i++) {
                     const r = records[i];
@@ -2241,7 +2218,7 @@
                     setSelectedStudentForManual(null);
                     setIsProcessingManual(false);
                     setDuplicateError(`คุณได้บันทึกเวลา${currentType}แล้วก่อนหน้านี้\n(${studentToSave.name})`);
-                    playErrorBeep(); // 🚀 ส่งเสียงตื้ดเมื่อสแกน/กรอกซ้ำ
+                    playErrorBeep(); 
                     setTimeout(() => { setDuplicateError(null); }, 1000);
                     return;
                 }
@@ -2250,7 +2227,6 @@
                 setSelectedStudentForManual(null);
                 setIsProcessingManual(false);
 
-                // 🚀 [แก้ไขที่ 3] สร้าง ID เฉพาะป้องกันการทับซ้อนเมื่อใช้งานหลายเครื่องพร้อมกัน (กรอกด้วยมือ)
                 const uniqueBaseId = Date.now() + Math.floor(Math.random() * 1000000);
 
                 const newTimeRecord = {
@@ -2279,7 +2255,6 @@
 
                 try {
                     setRecords(prev => [newTimeRecord, ...prev]);
-                    // 💡 รับ docId และ chunkIndex กรณีบันทึกแบบแมนนวล
                     const res = await saveTimeToFirebase(newTimeRecord);
                     if (res && res.status === 'success') {
                         setRecords(prev => prev.map(r => r.id === newTimeRecord.id ? { ...r, docId: res.docId, chunkIndex: res.chunkIndex } : r));
@@ -2346,7 +2321,6 @@
                                 finalFBehaviorName = `${finalFBehaviorName} (ครั้งที่ ${forgotCardCount})`;
                             }
 
-                            // 🚀 [แก้ไขที่ 4] อัปเดต ID พฤติกรรม (บันทึกกรณีลืมบัตร)
                             const newForgotBehaviorRecord = {
                                 id: uniqueBaseId + 3,
                                 date: scanDateStr,
@@ -2361,7 +2335,6 @@
 
                             if (setBehaviorRecords) setBehaviorRecords(prev => [newForgotBehaviorRecord, ...(prev || [])]);
                             
-                            // 🚀 [แก้ไข] บันทึกลง Firebase Collection: behavior_records แทน Google Sheet
                             if (window.db) {
                                 const safeDate = newForgotBehaviorRecord.date.replace(/\//g, '-');
                                 const docRef = window.db.collection('behavior_records').doc(safeDate);
@@ -2409,7 +2382,6 @@
                             const deductScore = -Math.abs(Number(lateBehavior.score));
                             const finalBehaviorName = lateBehavior.name.includes(searchKeyword) ? lateBehavior.name : `${lateBehavior.name} (${searchKeyword})`;
 
-                            // 🚀 [แก้ไขที่ 5] อัปเดต ID พฤติกรรม (บันทึกกรณีสายลงมือ)
                             const newBehaviorRecord = {
                                 id: uniqueBaseId + 2,
                                 date: scanDateStr,
@@ -2424,7 +2396,6 @@
 
                             if (setBehaviorRecords) setBehaviorRecords(prev => [newBehaviorRecord, ...(prev || [])]);
                             
-                            // 🚀 [แก้ไข] บันทึกลง Firebase Collection: behavior_records แทน Google Sheet
                             if (window.db) {
                                 const safeDate = newBehaviorRecord.date.replace(/\//g, '-');
                                 const docRef = window.db.collection('behavior_records').doc(safeDate);
@@ -2462,7 +2433,6 @@
                             records: [{ studentId: studentToSave.code, studentName: studentToSave.name, status: 'สาย', isChanged: true }]
                         };
                         const batchPayload = { attendance: [autoAttPayload], behaviorsToAdd: [], behaviorsToDelete: [], leavesToAdd: [], leavesToEdit: [], leavesToDelete: [] };
-                        // 🚀 [แก้ไข] ลบ callGAS ที่ซ้ำซ้อนทิ้ง ใช้ Firebase อย่างเดียว
                         if (typeof saveAttendanceBatchToFirebase === 'function') {
                             saveAttendanceBatchToFirebase(batchPayload).catch(e => console.log("Firebase auto att error:", e));
                         }
@@ -2478,7 +2448,6 @@
                             msg += `\n* บันทึกประวัติลืมบัตรครั้งที่ ${forgotCardCount} (ยังไม่ถึงเกณฑ์หักคะแนน)`;
                         }
                         
-                        // 🚀 ใช้เสียงติ๊ด และเปลี่ยนจาก Alert ให้เป็น Popup มุมขวาบน (หรือตรงกลางถ้าสาย)
                         playScanBeep();
                         showScanToast(msg, false, scanIsLate && !isExempted && !isLeaveExempted);
                     }, 300);
@@ -2534,7 +2503,6 @@
                                                     const { isOutMode } = determineModeAndLate(scanTimeStr, timeSettings.startIn, timeSettings.lateTime, timeSettings.startOut);
                                                     const currentType = isOutMode ? "ออก" : "เข้า";
 
-                                                    // ค้นหาการทำซ้ำแบบรวดเร็ว
                                                     let isDuplicate = false;
                                                     const fCode = String(found.code).trim();
                                                     for (let i = 0; i < records.length; i++) {
@@ -2571,7 +2539,6 @@
                         <div className="flex justify-between items-center mb-4 border-b pb-2 flex-wrap gap-3">
                             <h2 className="text-xl font-bold text-ns-blue"><i className="fa-solid fa-list mr-2"></i> ประวัติการบันทึกวันนี้</h2>
                             
-                            {/* 🚀 [เพิ่มใหม่] แผงตัวกรองข้อมูล ชั้น ห้อง ประเภท */}
                             <div className="flex flex-wrap items-center gap-2">
                                 <select value={filterClass} onChange={e => {setFilterClass(e.target.value); setFilterRoom('');}} className="border border-gray-300 rounded p-1.5 text-sm outline-none focus:ring-2 focus:ring-ns-blue">
                                     <option value="">-- ทุกชั้น --</option>
@@ -2629,7 +2596,6 @@
                                     )}
                                 </tbody>
                             </table>
-                            {/* แจ้งเตือนเพื่อให้ผู้ใช้ทราบว่ามีการกรองข้อมูลทิ้งไว้เผื่อตกใจ */}
                             {records.filter(r => formatDisplayDateCached(r.date) === dateStr).length > 100 && (
                                 <div className="text-center p-3 text-sm text-gray-500 bg-gray-50 border-t font-bold">
                                     แสดงผลเฉพาะ 100 รายการล่าสุดของวันนี้ (หากต้องการดูทั้งหมด ให้ไปที่เมนู <span className="text-ns-blue">"ประวัติการบันทึก"</span>)
@@ -2732,7 +2698,6 @@
                         </React.Fragment>
                     )}
                     
-                    {/* Modal ยืนยันการลบ สำหรับหน้าเวลาเข้า-ออกโรงเรียน */}
                     {deletingRecordId && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
                             <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm text-center animate-[bounce_0.3s_ease-in-out]">
@@ -2750,7 +2715,6 @@
                         </div>
                     )}
 
-                    {/* 💡 [แก้ไข] ปรับ z-index ให้ลอยเหนือกล้องโหมดเต็มจอ (z-[260]) */}
                     {duplicateError && (
                         <div className="fixed top-6 right-6 z-[260] bg-white border-l-8 shadow-2xl rounded-xl p-4 flex items-center min-w-[280px] border-red-500 animate-[bounce_0.3s_ease-in-out]">
                             <i className="fa-solid fa-triangle-exclamation text-red-500 text-3xl mr-3"></i>
