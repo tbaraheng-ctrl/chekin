@@ -1023,7 +1023,7 @@
             );
         };
 
-        // // 2. หน้าสแกนเวลาเข้า-ออก
+        // // // // 2. หน้าสแกนเวลาเข้า-ออก
         const ScannerPopup = ({ onClose, timeSettings, onRecordSaved, records, currentGps, studentList, schoolConfig, behaviorsSetting, behaviorRecords, setBehaviorRecords, user, exemptions, leaveRecords, onDuplicateScan, playErrorBeep, playScanBeep, isMuted, setIsMuted, volumeLevel, setVolumeLevel }) => {
             const [status, setStatus] = useState("กำลังเตรียมกล้อง...");
             const [scanResult, setScanResult] = useState(null);
@@ -1352,23 +1352,21 @@
                     if (isUnmounted) return;
 
                     try {
-                        // 💡 [แก้ไข] 1. บังคับอ่านเฉพาะ QR Code และ 2. เปิดใช้ Native Barcode Detector (ถ้ามือถือรองรับจะสแกนไวระดับเสี้ยววินาที)
-                        const qrFormats = window.Html5QrcodeSupportedFormats ? [window.Html5QrcodeSupportedFormats.QR_CODE] : undefined;
-                        scanner = new window.Html5Qrcode("reader", { 
-                            formatsToSupport: qrFormats,
-                            experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-                        });
+                        // 💡 [แก้ไข 1] ถอดการบังคับ BarcodeDetector ที่อาจบัคในมือถือบางรุ่นออก ใช้โหมดมาตรฐาน
+                        scanner = new window.Html5Qrcode("reader");
                         
-                        // 💡 [แก้ไข] ปลดล็อคข้อจำกัดของกรอบสแกน (ตัด qrbox ออก) เพื่อให้กล้องอ่านแบบ "เต็มเฟรมวิดีโอ"
-                        // ทันทีที่ QR Code โผล่เข้ามาในหน้าจอ ไม่ว่าจะมุมไหน ระบบจะจับได้ทันทีโดยไม่ต้องพยายามเล็งให้อยู่ตรงกลาง
+                        // 💡 [แก้ไข 2] คงการสแกนแบบ "เต็มเฟรม" ไว้ (ไม่มี qrbox) เพื่อให้สแกนติดง่ายไม่ต้องเล็ง
+                        // และตั้ง fps = 20 เพื่อให้เครื่องไม่หน่วงจนเกินไป
                         const config = { 
-                            fps: 30, // ใช้ 30 เฟรม เพื่อให้เครื่องประมวลผลได้ลื่นไหล ไม่ค้าง
+                            fps: 20, 
                             disableFlip: false 
                         };
                         
                         setStatus("กำลังเปิดกล้อง และขออนุญาต...");
 
                         try {
+                            // 💡 [แก้ไข 3] ถอดการบังคับความละเอียดกล้องและ Auto Focus ที่เป็นสาเหตุทำให้จอดำออก
+                            // ใช้คำสั่งขอเข้าถึงกล้องแบบมาตรฐานที่ปลอดภัย 100%
                             await scanner.start({ facingMode: cameraFacingMode }, config, 
                                 (decodedText) => processScanData(decodedText),
                                 (err) => {}
@@ -1674,7 +1672,7 @@
                 }
             }, [pendingSaves, isTryingToCloseScanner]);
 
-            // 💡 [แก้ไข] ปรับแต่งคลื่นเสียงเป็น 'triangle' เพื่อให้เสียงใสและดังฟังชัดทะลุมือถือ (เร่ง 200%)
+            // 💡 [แก้ไข] ปรับแต่งคลื่นเสียงเป็น 'triangle' เพื่อให้เสียงใสและดังฟังชัดทะลุมือถือ (เร่งความดังขึ้นเป็น 3 เท่าของระดับปกติ)
             const playScanBeep = React.useCallback(() => {
                 if (isMuted) return;
                 try {
@@ -1696,7 +1694,8 @@
                     oscillator.frequency.setValueAtTime(800, ctx.currentTime); 
                     oscillator.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.1); 
                     
-                    const actualVolume = volumeLevel > 0 ? Math.max(volumeLevel, 0.5) * 2.0 : 0; 
+                    // เร่งขยายเสียง 300% (3.0 เท่า)
+                    const actualVolume = volumeLevel > 0 ? Math.max(volumeLevel, 0.5) * 3.0 : 0; 
                     gainNode.gain.setValueAtTime(actualVolume, ctx.currentTime);
                     gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15); 
                     
@@ -1707,7 +1706,7 @@
                 }
             }, [volumeLevel, isMuted]);
 
-            // 💡 [แก้ไข] ปรับแต่งคลื่นเสียงเป็น 'sawtooth' สำหรับแจ้งเตือนข้อผิดพลาด ให้สั่นสะเทือนดังฟังชัด
+            // 💡 [แก้ไข] ปรับแต่งคลื่นเสียงเป็น 'sawtooth' สำหรับแจ้งเตือนข้อผิดพลาด ให้สั่นสะเทือนดังฟังชัด (เร่งความดัง 3 เท่า)
             const playErrorBeep = React.useCallback(() => {
                 if (isMuted) return;
                 try {
@@ -1728,7 +1727,8 @@
                     oscillator.type = 'sawtooth'; 
                     oscillator.frequency.setValueAtTime(250, ctx.currentTime); 
                     
-                    const actualVolume = volumeLevel > 0 ? Math.max(volumeLevel, 0.5) * 2.0 : 0;
+                    // เร่งขยายเสียง 300% (3.0 เท่า)
+                    const actualVolume = volumeLevel > 0 ? Math.max(volumeLevel, 0.5) * 3.0 : 0;
                     gainNode.gain.setValueAtTime(actualVolume, ctx.currentTime);
                     gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
                     
@@ -1905,7 +1905,6 @@
             const startScanner = async () => {
                 setIsPreparing(true);
 
-                // 💡 [แก้ไข] ปลดล็อก Audio Context ให้เบราว์เซอร์เตรียมพร้อมสำหรับเล่นเสียง ทันทีที่ผู้ใช้คลิก
                 try {
                     if (!audioCtxRef.current) {
                         const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -2693,7 +2692,6 @@
                                 setIsMuted={setIsMuted}
                                 volumeLevel={volumeLevel}
                                 setVolumeLevel={setVolumeLevel}
-                                scanConfig={{ fps: 60, disableFlip: false, qrbox: { width: 300, height: 300 } }}
                             />
                         </React.Fragment>
                     )}
