@@ -1034,6 +1034,7 @@
             // --- เพิ่ม State สำหรับกรอกรหัสด้วยมือ ---
             const [manualInput, setManualInput] = useState('');
             const [previewStudent, setPreviewStudent] = useState(null);
+            const [cameraFacingMode, setCameraFacingMode] = useState("environment"); // 💡 เพิ่ม State สำหรับสลับกล้องหน้า-หลังที่หายไป
 
             useEffect(() => {
                 const elem = document.documentElement;
@@ -1326,85 +1327,63 @@
                 }
             };
 
-            // 👇 แก้ไขปรับปรุงระบบการเรียกกล้องให้กระตุ้นการขออนุญาต (Permission) อัตโนมัติ
+            // 👇 แก้ไขปรับปรุงระบบการเรียกกล้อง ลดการชนกันของฮาร์ดแวร์เพื่อแก้ปัญหาหน้าขาว
             useEffect(() => {
                 let scanner = null;
                 let isUnmounted = false;
 
                 const initCamera = async () => {
                     if (isUnmounted) return;
-                    
-                    // 1. กระตุ้นให้เบราว์เซอร์เด้งหน้าต่าง "ขออนุญาตใช้กล้อง"
-                    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                        try {
-                            setStatus("กำลังขออนุญาตใช้กล้อง...");
-                            const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).catch(async () => {
-                                // ถ้าขอกล้องหลังไม่ได้ ให้ขอกล้องอะไรก็ได้เพื่อกระตุ้น Permission
-                                return await navigator.mediaDevices.getUserMedia({ video: true });
-                            });
-                            // เมื่อได้สิทธิ์แล้ว ปิดสตรีมไปก่อนเพื่อส่งต่อให้ Html5Qrcode จัดการ
-                            if (stream) {
-                                stream.getTracks().forEach(track => track.stop());
-                            }
-                        } catch (permErr) {
-                            console.error("Camera Permission Error:", permErr);
-                            setStatus("กรุณาอนุญาตการเข้าถึงกล้องในเบราว์เซอร์ (Settings > Site Settings)");
-                            return; // หยุดการทำงานถ้าผู้ใช้ไม่อนุญาต
-                        }
-                    } else {
-                        setStatus("เบราว์เซอร์ไม่รองรับ หรือไม่ได้ใช้งานผ่าน HTTPS");
-                        return;
-                    }
+
+                    // 💡 [แก้ไข] หน่วงเวลาเล็กน้อยเพื่อให้กล้องตัวเดิมปิดสนิท ป้องกันฮาร์ดแวร์ชนกันตอนสลับกล้อง
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    if (isUnmounted) return;
 
                     try {
                         scanner = new window.Html5Qrcode("reader");
                         
-                        // ปรับ config ให้กรอบโฟกัส (qrbox) ขยายกว้างเกือบเท่ากรอบกล้อง (95%)
+                        // 💡 [แก้ไข] ปรับ Config ให้ปลอดภัย ป้องกันบัคหน้าขาวจาก qrbox ที่คำนวณผิดพลาด
                         const config = { 
-                            fps: 30, // 🚀 [แก้ไข] เพิ่ม FPS จาก 10 เป็น 30 เพื่อให้กล้องจับภาพได้ถี่ขึ้น ไม่หน่วงเวลา
-                            qrbox: (viewfinderWidth, viewfinderHeight) => {
-                                const minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
-                                return {
-                                    width: Math.floor(minEdgeSize * 0.95),
-                                    height: Math.floor(minEdgeSize * 0.95)
-                                };
-                            },
-                            aspectRatio: 1.0 // บังคับสัดส่วนวิดีโอให้เป็นสี่เหลี่ยมจัตุรัสเพื่อให้พอดีกับ UI
+                            fps: 15, // FPS พอดีๆ ไม่ทำให้กล้องค้าง
+                            qrbox: { width: 250, height: 250 }, // บังคับขนาดคงที่ ป้องกัน React พัง
+                            aspectRatio: 1.0 
                         };
                         
-                        // 💡 ยกเลิกระบบตรวจสอบ GPS ปรับสถานะพร้อมสแกนทันที
-                        setStatus("พร้อมสแกนคิวอาร์โค้ด");
+                        setStatus("กำลังเปิดกล้อง และขออนุญาต...");
 
                         try {
-                            // ลองเปิดกล้องหลังก่อน
-                            await scanner.start({ facingMode: "environment" }, config, 
+                            // 💡 Html5Qrcode จะทำการขออนุญาตกล้อง (Permission) อัตโนมัติในขั้นตอนนี้
+                            await scanner.start({ facingMode: cameraFacingMode }, config, 
                                 (decodedText) => processScanData(decodedText),
                                 (err) => {}
                             );
+                            if (!isUnmounted) setStatus("พร้อมสแกนคิวอาร์โค้ด");
                         } catch (envError) {
-                            console.warn("ไม่สามารถดึงกล้องหลังได้โดยตรง กำลังสลับไปค้นหารายชื่อกล้อง...", envError);
+                            console.warn("ไม่สามารถดึงกล้องโดยตรงได้ กำลังสลับไปค้นหารายชื่อกล้อง...", envError);
                             if (isUnmounted) return;
                             
                             // ระบบสำรอง: ค้นหากล้องทั้งหมดในเครื่อง
                             try {
                                 const devices = await window.Html5Qrcode.getCameras();
                                 if (devices && devices.length > 0) {
-                                    // สำหรับ Android มักจะเจอกล้องหลังเป็นตัวที่อยู่ท้ายสุดของ Array (เลนส์หลัก)
-                                    const backCameraId = devices.length > 1 ? devices[devices.length - 1].id : devices[0].id;
-                                    await scanner.start(backCameraId, config, 
+                                    const fallbackCameraId = cameraFacingMode === "environment" 
+                                        ? (devices.length > 1 ? devices[devices.length - 1].id : devices[0].id)
+                                        : devices[0].id;
+                                    await scanner.start(fallbackCameraId, config, 
                                         (decodedText) => processScanData(decodedText),
                                         (err) => {}
                                     );
+                                    if (!isUnmounted) setStatus("พร้อมสแกนคิวอาร์โค้ด");
                                 } else {
                                     throw new Error("ไม่พบอุปกรณ์กล้อง");
                                 }
                             } catch (fallbackError) {
-                                setStatus("ไม่สามารถเปิดกล้องได้ กรุณารีเฟรชเบราว์เซอร์");
+                                if (!isUnmounted) setStatus("ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการเข้าถึงเบราว์เซอร์");
                             }
                         }
                     } catch (error) {
                         console.error("Camera Init Error:", error);
-                        setStatus("เกิดข้อผิดพลาดในการเตรียมกล้อง");
+                        if (!isUnmounted) setStatus("เกิดข้อผิดพลาดในการเตรียมกล้อง หรือเบราว์เซอร์ไม่รองรับ");
                     }
                 };
 
@@ -1426,11 +1405,15 @@
                     isUnmounted = true;
                     if (scanner) {
                         try {
-                            scanner.stop().then(() => scanner.clear()).catch(e => console.log(e));
+                            if (scanner.isScanning) {
+                                scanner.stop().then(() => scanner.clear()).catch(e => console.log(e));
+                            } else {
+                                scanner.clear();
+                            }
                         } catch(e) {}
                     }
                 };
-            }, []);
+            }, [cameraFacingMode]);
             // 👆 สิ้นสุดการแก้ไขระบบเรียกกล้อง
 
             return (
